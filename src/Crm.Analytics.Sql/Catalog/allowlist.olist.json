@@ -1,0 +1,102 @@
+{
+  "_meta": {
+    "contractVersion": "fabric-dwh-object-mapping-v1",
+    "status": "GORUNUM BEKLIYOR — olist_views.contract.sql'deki gorunumler olusturulmadan kullanilamaz",
+    "source": "data/fixtures/olist/ klasorundeki 5 CSV dosyasinin kolon adlari dogrulanarak yazildi (2026-07-30).",
+    "whyViewsNotTables": "Olist semasinda kapsam kolonu (customer_state) YALNIZCA musteri tablosunda var; tutarin bulundugu order_items'ta hicbir cografi kolon yok. Ham tablolari allow-list'e almak, tutar iceren en hassas tabloyu scopeExempt isaretlemek (dogrudan sizinti) veya guardrail'in zorlayamadigi bir cift JOIN'e bel baglamak anlamina gelirdi. Kapsam kolonu tutarla ayni satirda olmak zorunda.",
+    "joinPolicy": "maxJoins=0. Gorunumler denormalize oldugu icin JOIN'e ihtiyac yok. Ayrica vw_sales ile vw_customer_rfm arasinda ortak anahtar BULUNMUYOR (vw_sales'te customer_id, vw_customer_rfm'de customer_unique_id var), yani teknik olarak da birlestirilemezler. JOIN gerekirse DE'den ortak anahtar talep edilecek ve bu deger bilincli olarak yukseltilecek.",
+    "piiPolicy": "deniedColumns bos: temizlenmis dataset'te ad, e-posta, telefon, adres gibi dogrudan PII kolonu YOK. Kisiyi tekilleyen customer_unique_id yasakli degil, identityColumns'da — filtrede kullanilabilir, KIRILIMDA kullanilamaz. Kimlik ifsasi riski (ornek: kucuk sehir + kategori kirilimi) MinCellSize kontrolu ile ele alinir."
+  },
+
+  "objects": {
+    "vw_sales": {
+      "physicalName": "mart.vw_sales",
+      "columns": [
+        "order_id",
+        "order_item_id",
+        "product_id",
+        "price",
+        "freight_value",
+        "customer_id",
+        "order_status",
+        "order_purchase_timestamp",
+        "customer_state",
+        "customer_city",
+        "product_category"
+      ],
+      "scopeColumn": "customer_state",
+      "joinPaths": []
+    },
+
+    "vw_customer_rfm": {
+      "physicalName": "mart.vw_customer_rfm",
+      "columns": [
+        "customer_unique_id",
+        "customer_state",
+        "customer_city",
+        "last_order_timestamp",
+        "first_order_timestamp",
+        "order_count",
+        "total_price",
+        "total_freight"
+      ],
+      "scopeColumn": "customer_state",
+      "joinPaths": []
+    },
+
+    "vw_payment": {
+      "physicalName": "mart.vw_payment",
+      "columns": [
+        "order_id",
+        "payment_type",
+        "payment_installments",
+        "payment_value",
+        "order_status",
+        "order_purchase_timestamp",
+        "customer_state",
+        "customer_city"
+      ],
+      "scopeColumn": "customer_state",
+      "joinPaths": []
+    }
+  },
+
+  "scenarioObjects": {
+    "mart.vw_sales_detail": {
+      "contracts": ["useCase:sales_analysis"]
+    },
+    "mart.vw_monthly_sales": {
+      "contracts": ["useCase:sales_analysis"]
+    },
+    "mart.vw_sales_by_region": {
+      "contracts": ["useCase:sales_analysis"]
+    },
+    "mart.vw_sales_by_category": {
+      "contracts": ["useCase:category_performance"]
+    },
+    "mart.vw_customer_rfm_segmented": {
+      "contracts": ["useCase:customer_segmentation"]
+    },
+    "mart.vw_payment_summary": {
+      "contracts": ["metric:payment_total", "metric:avg_installments"]
+    }
+  },
+
+  "deniedColumns": [],
+
+  "identityColumns": [
+    "customer_id",
+    "customer_unique_id",
+    "order_id",
+    "order_item_id",
+    "product_id"
+  ],
+
+  "maxJoins": 0,
+  "maxRows": 5000,
+  "defaultRows": 5000,
+  "queryTimeoutSeconds": 30,
+  "maxDateRangeDays": 1100,
+  "maxInputLength": 8000,
+  "minCellSize": 5
+}

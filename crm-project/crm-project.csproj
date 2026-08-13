@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <!-- net8.0'dan yukseltildi: Crm.Analytics.Sql net10.0 hedefliyor ve net8.0 bir proje
+         net10.0 bir projeye referans veremez. Solution'daki bes projenin tamami net10.0. -->
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>crm_project</RootNamespace>
+    <UserSecretsId>838afa85-9666-419b-91e3-87e95392c8a7</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- SQL uretim katmani. Guardrail'dan gecmemis hicbir SQL bu uygulamada
+         uretilmez: kutuphane SQL metnini yalnizca Accepted kararlarda doner. -->
+    <ProjectReference Include="../src/Crm.Analytics.Sql/Crm.Analytics.Sql.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.ApplicationInsights.AspNetCore" Version="3.1.2" />
+    <PackageReference Include="Microsoft.Identity.Web" Version="4.14.2" />
+    <!-- Swashbuckle BILINCLI olarak 6.x'te tutuldu. 10.x, Microsoft.OpenApi 2.x'e
+         geciyor: OpenApiInfo/OpenApiSecurityScheme namespace'i Microsoft.OpenApi.Models'dan
+         Microsoft.OpenApi'ye tasiniyor ve OpenApiReference yerine
+         OpenApiSecuritySchemeReference geliyor. Swagger kurulumunu bastan yazmayi
+         gerektiren ayri bir is; SQL katmanini baglama isiyle ayni commit'e karistirilmadi.
+
+         Microsoft.AspNetCore.OpenApi paketi bu yuzden CIKARILDI: 10.0.10, Microsoft.OpenApi
+         2.x'i bagimlilik agacina zorluyor ve Swashbuckle 6.x'in kullandigi 1.6.x ile
+         catisiyor. Paketin tek kullanimi .WithOpenApi() cagrisiydi; dokumani Swashbuckle
+         zaten kendisi uretiyor. -->
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="6.6.2" />
+  </ItemGroup>
+
+
+</Project>

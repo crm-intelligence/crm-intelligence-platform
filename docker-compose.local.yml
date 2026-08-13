@@ -1,0 +1,31 @@
+services:
+  api:
+    image: crm-analytics-api:local
+    build:
+      context: .
+      dockerfile: src/CrmAnalytics.Api/Dockerfile
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+    ports:
+      - "127.0.0.1:8080:8080"
+    networks:
+      - crm-analytics-local
+
+  teams:
+    image: crm-analytics-teams:local
+    build:
+      context: .
+      dockerfile: src/CrmAnalytics.Teams/Dockerfile
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      BackendApi__BaseUrl: http://api:8080
+    ports:
+      - "127.0.0.1:3978:8080"
+    depends_on:
+      - api
+    networks:
+      - crm-analytics-local
+
+networks:
+  crm-analytics-local:
+    name: crm-analytics-local

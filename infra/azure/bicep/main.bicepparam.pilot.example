@@ -1,0 +1,116 @@
+using './main.bicep'
+
+// Pilot bootstrap resources are in Sweden Central.
+param location = 'swedencentral'
+param targetSubscriptionId = '634ccf7f-1073-4965-9385-9ae3bbef1533'
+param namePrefix = 'crm-analytics-pilot'
+
+// API remains pinned to the DWH mapping image; Teams is pinned to the verified SingleTenant bot image.
+param apiImage = 'crmprojectacr634c.azurecr.io/crm-analytics-api@sha256:ad06f57fce2e226ee7f8a812cfd352394701438a703a34ae104b245656db6d6a'
+param teamsImage = 'crmprojectacr634c.azurecr.io/crm-analytics-teams@sha256:580c683e896ddcdd0310c3369ea606d98620bb8086bf00c5c8339da9d301adbf'
+param acrLoginServer = 'crmprojectacr634c.azurecr.io'
+param runtimeIdentityResourceId = '/subscriptions/634ccf7f-1073-4965-9385-9ae3bbef1533/resourcegroups/crm-project-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-crm-analytics-runtime'
+param runtimeIdentityClientId = 'da156325-7c70-46fc-b899-024f9d73b994'
+param runtimeIdentityPrincipalId = 'ab5c6bec-a1b1-43fc-af9f-3aebe38a6182'
+
+// Reuse the existing RBAC-enabled Key Vault. Secret values are never parameters.
+param keyVaultIntegrationEnabled = true
+param keyVaultName = 'lokmancrmkv01'
+param keyVaultResourceGroupName = 'crm-project-rg'
+param applicationDbSecretName = 'crm-analytics-application-db'
+param queryDwhConnectionSecretName = 'crm-analytics-query-dwh'
+param queryOltpConnectionSecretName = 'crm-analytics-query-oltp'
+param internalApiKeySecretName = 'crm-analytics-internal-api-key'
+param teamsClientSecretName = 'crm-analytics-teams-client-secret'
+param teamsClientSecretIntegrationEnabled = true
+
+// Reuse the workspace linked to the existing Application Insights component.
+param logAnalyticsWorkspaceResourceId = ''
+param logAnalyticsWorkspaceName = 'managed-crm-project-insights-ws'
+param logAnalyticsWorkspaceResourceGroupName = 'ai_crm-project-insights_dc8b3de1-135d-462c-842f-3b1847ebce79_managed'
+param applicationInsightsResourceId = ''
+param applicationInsightsName = 'crm-project-insights'
+param applicationInsightsResourceGroupName = 'crm-project-rg'
+
+// API and Teams/Bot Entra registrations are distinct identities.
+param azureAdTenantId = '2e010224-86ea-4b34-93ea-f9833137c80e'
+param azureAdClientId = '809393e5-ff46-4422-a4b3-084ed1b91d98'
+param azureAdAudience = 'api://809393e5-ff46-4422-a4b3-084ed1b91d98'
+param teamsTenantId = '2e010224-86ea-4b34-93ea-f9833137c80e'
+param teamsAppType = 'SingleTenant'
+param teamsClientId = '3e277fe2-0da0-4149-80da-2168ac44e7b9'
+// Planned stable name only; the Azure Bot OAuth connection does not exist yet.
+param teamsOAuthConnectionName = 'crm-analytics-teams-oauth'
+
+// Pilot recovery only. This permits Azure-hosted resources to reach the logical
+// server; Entra-only authentication and the existing minimum SQL grants remain in
+// force. It is not a production private-network solution.
+param enablePilotAzureSqlAzureServicesRule = true
+param azureSqlServerName = 'crmprojectsql634c'
+
+// Direct selection disables FabricJob. OLTP is enabled as a separately routed query source.
+param analyticsProvider = 'Direct'
+param allowDirectAnalyticsInProtectedEnvironments = true
+param queryDwhEnabled = true
+param queryDwhServer = 'eqbaclxkqy2exe7k7gbtcn6iby-5es6c723oane3lbx5mhcfaa6q4.datawarehouse.fabric.microsoft.com'
+param queryDwhInitialCatalog = 'wh_crm_analytics'
+param queryOltpEnabled = true
+
+// Fabric capacity lokmanfabric/fabric-rg is existing and is not deployed here.
+param fabricWorkspaceId = '<fabric-workspace-id-not-used-by-direct>'
+param fabricItemId = '<fabric-item-id-not-used-by-direct>'
+param fabricJobType = ''
+param powerBiWorkspaceId = '7fe125e9-705b-4d1a-ac37-eb0e22801e87'
+param powerBiReportId = '36b69ded-e421-412b-b187-70caa70d4292'
+param powerBiSemanticModelId = 'bdc46a8f-03cb-4bd8-a9c2-2dde70dd5432'
+
+// Service Bus is a bootstrap prerequisite; main.bicep does not create it.
+param serviceBusNamespace = 'crmprojectsb634c.servicebus.windows.net'
+param serviceBusQueueName = 'crm-report-processing'
+
+// Bootstrap-only Azure SQL metadata, intentionally not consumed by main.bicep.
+// The application connection remains a Key Vault reference by secret name above;
+// no connection string or secret value is stored in this file.
+// Server: crmprojectsql634c
+// FQDN: crmprojectsql634c.database.windows.net
+// Database: CrmAnalytics
+// Region: swedencentral
+// Pricing: Standard S0 (10 DTU)
+// Authentication: Microsoft Entra-only (administrator: ramazanb)
+// Public network access: Enabled; minimum TLS: 1.2.
+// Pilot firewall rule: AllowAllWindowsAzureIps (0.0.0.0-0.0.0.0), opt-in above.
+// Migration: Applied from deploy/sql/CrmAnalytics.Migrations.sql
+// Runtime database user: id-crm-analytics-runtime (EXTERNAL_USER, explicit object ID)
+// Runtime database permissions: SELECT/INSERT/UPDATE/DELETE on schema crm only;
+// no EXECUTE, DDL, db_owner, db_ddladmin, db_securityadmin or db_accessadmin.
+// Key Vault secret crm-analytics-application-db: Existing and enabled; value omitted.
+// Production debt: move the workload-profile Container Apps Environment into a
+// custom VNet, use NAT Gateway or a private endpoint, then remove this pilot rule.
+// Fabric DWH query source (managed identity; secret value omitted).
+// Server: eqbaclxkqy2exe7k7gbtcn6iby-5es6c723oane3lbx5mhcfaa6q4.datawarehouse.fabric.microsoft.com,1433
+// Initial Catalog: wh_crm_analytics
+// Schemas: mart (read-only reporting views), dwh (base tables; not allow-listed)
+// Runtime UAMI client ID: da156325-7c70-46fc-b899-024f9d73b994
+// Key Vault secret crm-analytics-query-dwh: Existing and enabled; value omitted.
+// Fabric SQL Database OLTP query source (managed identity; secret value omitted).
+// Server: eqbaclxkqy2exe7k7gbtcn6iby-5es6c723oane3lbx5mhcfaa6q4.database.fabric.microsoft.com,1433
+// Initial Catalog: crm_oltp-3fc7fdf2-6c02-4c2f-8811-298d6b38c299
+// Schema: dbo
+// Runtime UAMI client ID: da156325-7c70-46fc-b899-024f9d73b994
+// Key Vault secret crm-analytics-query-oltp: Existing and enabled; value omitted.
+// Report query surface: dbo.vw_operational_orders only; SELECT-only remains enforced.
+// Existing database permission inventory (unchanged by this preparation):
+// SELECT/INSERT/UPDATE on dbo.customers, dbo.products, dbo.orders,
+// dbo.order_items and dbo.order_payments; SELECT on dbo.vw_operational_orders;
+// DELETE is not granted. Runtime managed-identity smoke follows Container Apps deployment.
+// Azure Bot resource name placeholder: crm-analytics-teams-bot (resource not created)
+// Teams client secret reference activation: true; secret value remains in Key Vault
+// OAuth connection planned name: crm-analytics-teams-oauth (not created on Azure Bot)
+// Teams callback/messaging endpoint is derived from the deterministic Teams app
+// name plus the Container Apps Environment defaultDomain; no URL override is needed.
+// Power BI report page identifiers (not report IDs; deployment documentation only):
+// 84686876a120a0b04881
+// 033e576a7c43418160b7
+// 637aeb7338de115d4c9c
+// Existing ApplicationInsightsConnectionString is not mapped because the target
+// API and Teams projects do not currently register an Application Insights SDK.

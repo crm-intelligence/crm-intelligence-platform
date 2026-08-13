@@ -1,0 +1,25 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <!-- Guvenlik-kritik bilesen: uyari birakmiyoruz. -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Sozlesme dosyalari assembly'ye gomulur: dosya yolu tahminine bagli test yazmamak
+         ve Backend ile paylasilan semanin surumle birlikte tasinmasi icin. -->
+    <EmbeddedResource Include="Contracts/canonical_request.schema.json" />
+    <EmbeddedResource Include="Catalog/*.json" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.10" />
+    <!-- Kose parantez = tam surum kilidi. Parser davranisi degisikligi sessiz guvenlik
+         regresyonu demektir; surum yukseltmesi bilincli ve test edilerek yapilir. -->
+    <PackageReference Include="Microsoft.SqlServer.TransactSql.ScriptDom" Version="[180.59.2]" />
+  </ItemGroup>
+
+</Project>

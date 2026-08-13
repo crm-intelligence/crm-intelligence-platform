@@ -1,0 +1,22 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/CrmAnalytics.Api/CrmAnalytics.Api.csproj" />
+    <Project Path="src/CrmAnalytics.Application/CrmAnalytics.Application.csproj" />
+    <Project Path="src/CrmAnalytics.Contracts/CrmAnalytics.Contracts.csproj" />
+    <Project Path="src/CrmAnalytics.Domain/CrmAnalytics.Domain.csproj" />
+    <Project Path="src/CrmAnalytics.Infrastructure/CrmAnalytics.Infrastructure.csproj" />
+    <Project Path="src/CrmAnalytics.Teams/CrmAnalytics.Teams.csproj" />
+    <Project Path="src/Crm.Analytics.Sql/Crm.Analytics.Sql.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/CrmAnalytics.UnitTests/CrmAnalytics.UnitTests.csproj" />
+    <Project Path="tests/CrmAnalytics.IntegrationTests/CrmAnalytics.IntegrationTests.csproj" />
+    <Project Path="tests/CrmAnalytics.DataScopeProvisioner.Tests/CrmAnalytics.DataScopeProvisioner.Tests.csproj" />
+    <Project Path="tests/Crm.Analytics.Sql.Tests/Crm.Analytics.Sql.Tests.csproj" />
+    <Project Path="tests/Crm.Analytics.Sql.IntegrationTests/Crm.Analytics.Sql.IntegrationTests.csproj" />
+  </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/CrmAnalytics.DataScopeProvisioner/CrmAnalytics.DataScopeProvisioner.csproj" />
+    <Project Path="tools/Crm.Analytics.Sql.DevData/Crm.Analytics.Sql.DevData.csproj" />
+  </Folder>
+</Solution>

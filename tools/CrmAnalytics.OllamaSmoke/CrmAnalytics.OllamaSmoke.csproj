@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <ProjectReference Include="..\..\src\CrmAnalytics.Infrastructure\CrmAnalytics.Infrastructure.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="$(IntermediateOutputPath)EvaluationBuildFingerprint.g.cs" />
+  </ItemGroup>
+  <Target Name="GenerateEvaluationBuildFingerprint" BeforeTargets="CoreCompile">
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\Write-EvaluationFingerprint.ps1&quot; -RepositoryRoot &quot;$(MSBuildProjectDirectory)\..\..&quot; -OutputFile &quot;$(MSBuildProjectDirectory)\$(IntermediateOutputPath)EvaluationBuildFingerprint.g.cs&quot; -BuildConfiguration &quot;$(Configuration)&quot;" />
+  </Target>
+</Project>

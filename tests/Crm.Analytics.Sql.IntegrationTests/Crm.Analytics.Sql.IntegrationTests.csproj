@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <!-- Cevirici onaylanmis SQL'i yeniden yaziyor: guvenlige komsu bir bilesen.
+         Kutuphanenin cubugunda tutuluyor. -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" Version="6.0.4" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.10" />
+    <!-- Bkz. Crm.Analytics.Sql.DevData.csproj: 2.1.11'de yuksek onem dereceli
+         aciklik var (GHSA-2m69-gcr7-jv3q). Yamalanmis surum sabitleniyor. -->
+    <PackageReference Include="SQLitePCLRaw.lib.e_sqlite3" Version="2.1.12" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Sozlesme dosyalari gomulu kaynak olarak baglaniyor: sapma testi ikisini
+         karsilastirabilsin ve test calisma dizinine bagimli olmasin.
+         URETIM DOSYALARI DEGISTIRILMIYOR — yalnizca link veriliyor. -->
+    <EmbeddedResource Include="..\..\src\Crm.Analytics.Sql\Catalog\olist_views.contract.sql"
+                      Link="Contract\olist_views.contract.sql"
+                      LogicalName="olist_views.contract.sql" />
+    <EmbeddedResource Include="..\..\tools\Crm.Analytics.Sql.DevData\sqlite_views.sql"
+                      Link="Contract\sqlite_views.sql"
+                      LogicalName="sqlite_views.sql" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Crm.Analytics.Sql\Crm.Analytics.Sql.csproj" />
+  </ItemGroup>
+
+</Project>

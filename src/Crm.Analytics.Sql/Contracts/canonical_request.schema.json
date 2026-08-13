@@ -1,0 +1,164 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://techbros.local/schemas/canonical_request.schema.json",
+  "title": "Canonical Request",
+  "description": "Dogal dil talebinin yapilandirilmis hali. Backend ile AI Engineer arasindaki tasima sozlesmesi (11-sprint-11-gun.md Gun 2 cikis kriteri). DIKKAT: kullanicinin veri kapsami (yetki) bu sozlesmede TASINMAZ; ayri bir kanaldan gelir ve SQL'e guardrail tarafindan enjekte edilir.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["requestId", "conversationId", "intent", "metrics", "dateRange"],
+  "properties": {
+    "requestId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "description": "Talebin ucdan uca izlenmesini saglayan kimlik. Audit'in birincil anahtari."
+    },
+    "conversationId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "description": "Teams konusma baglami."
+    },
+    "previousRequestId": {
+      "type": ["string", "null"],
+      "maxLength": 64,
+      "description": "Dolu ise bu talep bir delta'dir: yalnizca degisen alanlar uygulanir, geri kalanlar onceki talepten korunur."
+    },
+    "source": {
+      "type": ["string", "null"],
+      "enum": ["dwh", "oltp", null],
+      "description": "SQL uretiminden once kesinlestirilen source. null eski payload uyumlulugudur ve DWH varsayimi degildir."
+    },
+    "intent": {
+      "enum": ["compare", "trend", "breakdown", "single_value", "list"]
+    },
+    "metrics": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 8,
+      "items": { "$ref": "#/$defs/catalogKey" },
+      "description": "Yalnizca Metric Catalog anahtarlari. Serbest metin kabul edilmez."
+    },
+    "dimensions": {
+      "type": "array",
+      "maxItems": 4,
+      "items": { "$ref": "#/$defs/catalogKey" },
+      "description": "Yalnizca Metric Catalog dimension anahtarlari."
+    },
+    "filters": {
+      "type": "array",
+      "maxItems": 12,
+      "items": { "$ref": "#/$defs/filter" }
+    },
+    "dateRange": { "$ref": "#/$defs/dateRange" },
+    "grain": {
+      "enum": ["none", "day", "week", "month", "quarter", "year"],
+      "default": "none"
+    },
+    "limit": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "description": "Talebin istedigi satir siniri. Guardrail bunu allow-list'teki maxRows ile sinirlar; daha yuksek bir deger istemek limiti YUKSELTMEZ."
+    },
+    "orderBy": {
+      "type": ["string", "null"],
+      "pattern": "^[a-z][a-z0-9_]{1,63}$",
+      "description": "Yalnizca secili source katalogundaki sortable dimension anahtari."
+    },
+    "orderDirection": {
+      "enum": ["asc", "desc"],
+      "default": "asc"
+    },
+    "scenarioKey": {
+      "type": ["string", "null"],
+      "pattern": "^[a-z][a-z0-9_]{2,63}$",
+      "description": "Tanimli Query Builder senaryosuna esleme anahtari. Dolu ise talep deterministik yoldan gider; bos ise Guarded NL2SQL degerlendirilir."
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "unresolvedTerms": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Legacy deterministic parser uyumlulugu icin cozumlenemeyen terimler. Bos degilse confidence degerinden bagimsiz olarak Query Builder yolu bloke edilir."
+    }
+  },
+  "$defs": {
+    "catalogKey": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{1,63}$",
+      "description": "Metric Catalog anahtari. Kucuk harf, alt cizgi. Tablo veya kolon adi DEGILDIR; katalog uzerinden cozumlenir."
+    },
+    "filter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["field", "op", "values"],
+      "properties": {
+        "field": { "$ref": "#/$defs/catalogKey" },
+        "op": {
+          "enum": ["eq", "not_eq", "in", "not_in", "gt", "gte", "lt", "lte", "between"]
+        },
+        "values": {
+          "description": "Filtre degerleri. Operatorun bekledigi sayida eleman: 'eq' bir, 'between' iki, 'in' en az bir. Skaler yerine HER ZAMAN dizi kullanilmasi bilincli — tek deger ile coklu deger arasinda sema dali olusturmak, cozumlemeyi polimorfik ve kirilgan yapardi. Eleman sayisi ile operator uyumu burada degil Query Builder'da dogrulanir; bu bir tasima sozlesmesidir.",
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 100,
+          "items": { "$ref": "#/$defs/filterLiteral" }
+        }
+      }
+    },
+    "filterLiteral": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "raw"],
+      "properties": {
+        "kind": {
+          "enum": ["text", "integer", "decimal", "boolean", "date"],
+          "description": "Degerin tipi. Query Builder ONCELIKLE Metric Catalog'daki dimension tanimindan cozer; bu alan yalnizca katalogda tip bulunmadiginda kullanilir. Sebep: '2026-04-01' hem metin hem tarih olabilir ve JSON'dan tahmin etmek yanlis parametre baglamaya, implicit conversion'a ve collation'a bagli olarak FARKLI satir kumesine yol acar."
+        },
+        "raw": {
+          "type": "string",
+          "description": "Degerin ham metin gosterimi. Tirnak veya kacis karakteri icermez; hicbir asamada SQL metnine gomulmez, yalnizca parametre olarak baglanir."
+        }
+      }
+    },
+    "dateRange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "enum": ["relative", "absolute", "not_applicable"],
+          "description": "not_applicable = kaynakta zaman boyutu YOK, tarih araligi uygulanamaz (ornek: vw_customer_rfm). 'absolute ama tarihsiz' seklinde ifade etmek semanin from/to zorunlulugunu ihlal ederdi; uygulanamaz aralik ucuncu bir durumdur."
+        },
+        "relativeExpression": {
+          "type": ["string", "null"],
+          "description": "kind=relative icin gorece ifade ('last_quarter'). Cozumlenmis mutlak tarihler from/to alanlarina yazilir; bu alan cozumlemenin gerekcesini audit'te gorunur kilmak icin korunur."
+        },
+        "from": { "type": ["string", "null"], "format": "date" },
+        "to": { "type": ["string", "null"], "format": "date" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "kind": { "const": "absolute" } } },
+          "then": { "required": ["from", "to"] }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "relative" } } },
+          "then": { "required": ["relativeExpression"] }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "not_applicable" } } },
+          "then": {
+            "properties": {
+              "from": { "type": "null" },
+              "to": { "type": "null" }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

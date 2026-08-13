@@ -1,0 +1,55 @@
+{
+  "_meta": {
+    "status": "TEST FIXTURE — uretim allow-list'i degildir",
+    "purpose": "Guardrail kontrollerinin gercek semadan bagimsiz test edilmesi. Veri Muhendisi'nden izinli gorunum listesi geldiginde uretim dosyasi ayrica yazilir; bu dosya DEGISMEZ, boylece testler sema degisikliginden etkilenmez.",
+    "source": "proje-dokumanlari/roller/ai-engineer-gorevleri.md 3.3 Allow-list ornegi + eklenen kontrol alanlari"
+  },
+
+  "objects": {
+    "vw_sales": {
+      "columns": [
+        "order_id",
+        "order_date",
+        "net_amount",
+        "quantity",
+        "region",
+        "store_id",
+        "product_category",
+        "customer_id",
+        "campaign_flag"
+      ],
+      "scopeColumn": "region",
+      "joinPaths": [
+        { "to": "vw_customer", "on": "vw_sales.customer_id = vw_customer.customer_id" }
+      ]
+    },
+
+    "vw_customer": {
+      "columns": ["customer_id", "segment", "first_order_date", "city", "region"],
+      "scopeColumn": "region",
+      "joinPaths": []
+    },
+
+    "vw_campaign": {
+      "columns": ["campaign_id", "campaign_name", "start_date", "end_date", "channel", "region"],
+      "scopeColumn": "region",
+      "joinPaths": []
+    },
+
+    "vw_date": {
+      "columns": ["date_key", "year", "quarter", "month", "week"],
+      "scopeExempt": true,
+      "joinPaths": []
+    }
+  },
+
+  "deniedColumns": ["customer_name", "email", "phone", "national_id", "address"],
+  "identityColumns": ["customer_id", "order_id", "campaign_id"],
+
+  "maxJoins": 2,
+  "maxRows": 5000,
+  "queryTimeoutSeconds": 30,
+  "maxDateRangeDays": 1100,
+  "maxInputLength": 8000,
+  "minCellSize": 5
+}

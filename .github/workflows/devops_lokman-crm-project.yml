@@ -1,0 +1,69 @@
+# Docs for the Azure Web Apps Deploy action: https://github.com/Azure/webapps-deploy
+# More GitHub Actions for Azure: https://github.com/Azure/actions
+
+name: Build and deploy ASP.Net Core app to Azure Web App - lokman-crm-project
+
+on:
+  push:
+    branches:
+      - devops
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read #This is required for actions/checkout
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET Core
+        uses: actions/setup-dotnet@v4
+        with:
+          # Uygulama net10.0'a yükseltildi (SQL üretim katmanı net10.0 hedefliyor
+          # ve net8.0 bir proje ona referans veremez).
+          dotnet-version: '10.x'
+
+      # Proje yolu ARTIK AÇIKÇA veriliyor. Uygulama kök dizinden crm-project/
+      # altına taşındı; kökte .csproj kalmadığı için yolsuz `dotnet publish`
+      # çözümlenemez veya yanlış projeyi seçerdi.
+      - name: Build with dotnet
+        run: dotnet build crm-project/crm-project.csproj --configuration Release
+
+      - name: dotnet publish
+        run: dotnet publish crm-project/crm-project.csproj -c Release -o ${{env.DOTNET_ROOT}}/myapp
+
+      - name: Upload artifact for deployment job
+        uses: actions/upload-artifact@v4
+        with:
+          name: .net-app
+          path: ${{env.DOTNET_ROOT}}/myapp
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      id-token: write #This is required for requesting the JWT
+      contents: read #This is required for actions/checkout
+
+    steps:
+      - name: Download artifact from build job
+        uses: actions/download-artifact@v4
+        with:
+          name: .net-app
+
+      - name: Login to Azure
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_A463DAF8DB924675B46028E85DA48400 }}
+          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_4F1054A515D04069964FA288B9AAA51C }}
+          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_5562CA27C5D14A228245039518E36527 }}
+
+      - name: Deploy to Azure Web App
+        id: deploy-to-webapp
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: 'lokman-crm-project'
+          slot-name: 'Production'
+          package: .

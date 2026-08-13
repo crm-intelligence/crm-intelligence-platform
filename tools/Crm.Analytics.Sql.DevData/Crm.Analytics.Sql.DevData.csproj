@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Crm.Analytics.Sql.DevData</RootNamespace>
+    <!-- Fixture uretimi sessiz hata kaldirmaz: uyari birakmiyoruz. -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Gorunum DDL'i assembly'ye gomulur: aracin calisma dizinine bagimli olmamasi
+         icin (Catalog/*.json ile ayni gerekce). -->
+    <EmbeddedResource Include="sqlite_views.sql" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.10" />
+    <!-- Microsoft.Data.Sqlite 10.0.10 gecisli olarak SQLitePCLRaw.lib.e_sqlite3
+         2.1.11'i cekiyor; o surumde yuksek onem dereceli bir aciklik var
+         (GHSA-2m69-gcr7-jv3q). Yamalanmis surum acikca sabitleniyor.
+         NU1903'u bastirmak yerine surum yukseltmek tercih edildi: guvenlik
+         odakli bir projede aciklik uyarisini kapatmak yanlis sinyal verir. -->
+    <PackageReference Include="SQLitePCLRaw.lib.e_sqlite3" Version="2.1.12" />
+  </ItemGroup>
+
+</Project>

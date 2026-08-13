@@ -1,0 +1,42 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/teams/v1.28/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.28",
+  "version": "1.0.2",
+  "id": "2dd37671-1b40-467e-9143-61bf104b67da",
+  "developer": {
+    "name": "CRM Analytics Pilot Team",
+    "websiteUrl": "https://crm-analytics-pilot-teams.jollyplant-0f656895.swedencentral.azurecontainerapps.io/",
+    "privacyUrl": "https://crm-analytics-pilot-teams.jollyplant-0f656895.swedencentral.azurecontainerapps.io/privacy",
+    "termsOfUseUrl": "https://crm-analytics-pilot-teams.jollyplant-0f656895.swedencentral.azurecontainerapps.io/terms"
+  },
+  "name": {
+    "short": "CRM Analytics Pilot",
+    "full": "CRM Analytics Pilot"
+  },
+  "description": {
+    "short": "Request and receive CRM analytics reports in Microsoft Teams.",
+    "full": "CRM Analytics Pilot lets authorized users request CRM analytics reports, follow report progress, and receive results in Microsoft Teams."
+  },
+  "icons": {
+    "outline": "outline.png",
+    "color": "color.png"
+  },
+  "accentColor": "#315C9B",
+  "supportsChannelFeatures": "tier1",
+  "bots": [
+    {
+      "botId": "3e277fe2-0da0-4149-80da-2168ac44e7b9",
+      "scopes": [
+        "personal",
+        "team",
+        "groupChat"
+      ],
+      "supportsFiles": false,
+      "isNotificationOnly": false
+    }
+  ],
+  "validDomains": [
+    "crm-analytics-pilot-teams.jollyplant-0f656895.swedencentral.azurecontainerapps.io",
+    "token.botframework.com"
+  ]
+}

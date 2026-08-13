@@ -1,0 +1,142 @@
+name: Deploy Azure Container Apps
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: GitHub Environment with approval and Azure values
+        required: true
+        type: environment
+      deployInfrastructure:
+        description: Run the approved Bicep deployment after what-if
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    env:
+      API_IMAGE: ${{ vars.ACR_NAME }}.azurecr.io/crm-analytics-api:${{ github.sha }}
+      TEAMS_IMAGE: ${{ vars.ACR_NAME }}.azurecr.io/crm-analytics-teams:${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Verify canonical deployment inputs
+        shell: pwsh
+        run: |
+          $requiredPaths = @(
+            'src/Crm.Analytics.Sql/Crm.Analytics.Sql.csproj',
+            'src/CrmAnalytics.Api/Dockerfile',
+            'src/CrmAnalytics.Teams/Dockerfile',
+            'src/CrmAnalytics.Infrastructure/CrmAnalytics.Infrastructure.csproj',
+            'infra/azure/bicep/main.bicep',
+            'deploy/sql/CrmAnalytics.Migrations.sql',
+            'deploy/teams/manifest.json',
+            'deploy/teams/color.png',
+            'deploy/teams/outline.png'
+          )
+          foreach ($path in $requiredPaths) {
+            if (-not (Test-Path -LiteralPath $path)) { throw "BLOCKED: canonical deployment input is missing: $path" }
+          }
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Build and push immutable images
+        run: |
+          az acr login --name "${{ vars.ACR_NAME }}"
+          docker build --file src/CrmAnalytics.Api/Dockerfile --tag "$API_IMAGE" .
+          docker build --file src/CrmAnalytics.Teams/Dockerfile --tag "$TEAMS_IMAGE" .
+          docker push "$API_IMAGE"
+          docker push "$TEAMS_IMAGE"
+
+      - name: Bicep validation and what-if
+        env:
+          BICEP_PARAMETERS_JSON: ${{ secrets.BICEP_PARAMETERS_JSON }}
+        run: |
+          if [ -z "$BICEP_PARAMETERS_JSON" ]; then echo 'BLOCKED: BICEP_PARAMETERS_JSON is not configured.'; exit 2; fi
+          printf '%s' "$BICEP_PARAMETERS_JSON" > "$RUNNER_TEMP/bicep-parameters.json"
+          az bicep build --file infra/azure/bicep/main.bicep
+          az deployment group validate --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" --template-file infra/azure/bicep/main.bicep --parameters "@$RUNNER_TEMP/bicep-parameters.json" apiImage="$API_IMAGE" teamsImage="$TEAMS_IMAGE"
+          az deployment group what-if --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" --template-file infra/azure/bicep/main.bicep --parameters "@$RUNNER_TEMP/bicep-parameters.json" apiImage="$API_IMAGE" teamsImage="$TEAMS_IMAGE"
+
+      - name: Deploy approved revision
+        if: ${{ inputs.deployInfrastructure }}
+        env:
+          BICEP_PARAMETERS_JSON: ${{ secrets.BICEP_PARAMETERS_JSON }}
+        run: |
+          printf '%s' "$BICEP_PARAMETERS_JSON" > "$RUNNER_TEMP/bicep-parameters.json"
+          az deployment group create --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" --template-file infra/azure/bicep/main.bicep --parameters "@$RUNNER_TEMP/bicep-parameters.json" apiImage="$API_IMAGE" teamsImage="$TEAMS_IMAGE"
+
+      - name: Verify new revisions and deactivate superseded revisions
+        if: ${{ inputs.deployInfrastructure }}
+        shell: pwsh
+        run: |
+          $targets = @(
+            @{ Name = '${{ vars.API_CONTAINER_APP_NAME }}'; Image = $env:API_IMAGE },
+            @{ Name = '${{ vars.TEAMS_CONTAINER_APP_NAME }}'; Image = $env:TEAMS_IMAGE }
+          )
+          foreach ($target in $targets) {
+            $revisions = az containerapp revision list `
+              --resource-group '${{ vars.AZURE_RESOURCE_GROUP }}' `
+              --name $target.Name -o json | ConvertFrom-Json
+            if ($LASTEXITCODE -ne 0) { throw "Failed to list revisions for $($target.Name)." }
+
+            $current = $revisions |
+              Where-Object { $_.properties.template.containers[0].image -eq $target.Image } |
+              Sort-Object { [datetimeoffset]$_.properties.createdTime } -Descending |
+              Select-Object -First 1
+            if ($null -eq $current -or $current.properties.healthState -ne 'Healthy' -or -not $current.properties.active) {
+              throw "$($target.Name) has no active healthy revision for image $($target.Image)."
+            }
+
+            $superseded = $revisions | Where-Object {
+              $_.properties.active -and $_.name -ne $current.name
+            }
+            foreach ($revision in $superseded) {
+              az containerapp revision deactivate `
+                --resource-group '${{ vars.AZURE_RESOURCE_GROUP }}' `
+                --name $target.Name `
+                --revision $revision.name
+              if ($LASTEXITCODE -ne 0) { throw "Failed to deactivate $($revision.name)." }
+            }
+          }
+
+      - name: Produce migration script for DBA approval
+        run: |
+          dotnet tool restore
+          mkdir -p artifacts/sql
+          dotnet ef migrations script --idempotent --project src/CrmAnalytics.Infrastructure/CrmAnalytics.Infrastructure.csproj --startup-project src/CrmAnalytics.Api/CrmAnalytics.Api.csproj --context CrmAnalyticsDbContext --output artifacts/sql/CrmAnalytics.Migrations.sql
+
+      - name: Package Teams app artifact
+        run: |
+          jq empty deploy/teams/manifest.json
+          mkdir -p artifacts/teams
+          zip -j artifacts/teams/crm-analytics-pilot-teams-app.zip deploy/teams/manifest.json deploy/teams/color.png deploy/teams/outline.png
+
+      - name: Upload migration artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: migration-script-${{ github.sha }}
+          path: artifacts/sql/CrmAnalytics.Migrations.sql
+          if-no-files-found: error
+
+      - name: Upload Teams app artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: teams-app-${{ github.sha }}
+          path: artifacts/teams/crm-analytics-pilot-teams-app.zip
+          if-no-files-found: error

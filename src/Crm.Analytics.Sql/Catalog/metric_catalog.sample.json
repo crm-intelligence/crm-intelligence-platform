@@ -1,0 +1,140 @@
+{
+  "_meta": {
+    "status": "SAMPLE — PRODUCTION DEGILDIR",
+    "warning": "Bu dosyadaki tablo ve kolon adlari (vw_sales, net_amount, ...) proje dokumanlarindaki ORNEK JSON'lardan alinmistir; gercek semayi yansittigi teyit edilmemistir. Veri Muhendisi'nden izinli gorunum/kolon listesi geldiginde metric_catalog.json olarak yeniden yazilacaktir. Guardrail testleri bu dosyaya DEGIL, Tests/Fixtures altindaki kopyalarina baglidir.",
+    "aliasConvention": "expression alanlarinda tablo alias'i KULLANILMAZ, yalnizca kolon adi yazilir. Sebep: proje dokumaninda metric expression'lari 'f.' alias'i, negatif test ornekleri ise 'vw_sales v' alias'i kullaniyor — celiskili. Alias'i katalogda sabitlemek yerine, CatalogValidator kolonun hangi objeye ait oldugunu allow-list'ten cozer ve Query Builder AST uzerinde dogru alias ile niteler. Boylece string birlestirme de, alias cakismasi da olmaz.",
+    "sourceDocuments": [
+      "proje-dokumanlari/roller/ai-engineer-gorevleri.md (3.2 Metric Catalog)",
+      "proje-dokumanlari/11-sprint-11-gun.md:57 (BI'in teyit ettigi KPI listesi)"
+    ]
+  },
+
+  "metrics": {
+    "net_sales": {
+      "label": "Net Satis",
+      "kind": "aggregate",
+      "expression": "SUM(net_amount)",
+      "source": "vw_sales",
+      "unit": "TRY",
+      "format": "#,##0",
+      "aliases": ["net satis", "net ciro", "net satislar"],
+      "approvalStatus": "documented",
+      "approvalNote": "11-sprint-11-gun.md:57'de BI'in teyit ettigi KPI listesinde yer aliyor."
+    },
+
+    "order_count": {
+      "label": "Satis Adedi",
+      "kind": "aggregate",
+      "expression": "COUNT(DISTINCT order_id)",
+      "source": "vw_sales",
+      "unit": "count",
+      "format": "#,##0",
+      "aliases": ["satis adedi", "siparis sayisi", "adet"],
+      "approvalStatus": "documented",
+      "approvalNote": "11-sprint-11-gun.md:57'de BI'in teyit ettigi KPI listesinde yer aliyor."
+    },
+
+    "avg_basket": {
+      "label": "Ortalama Sepet",
+      "kind": "ratio",
+      "expression": "SUM(net_amount) / NULLIF(COUNT(DISTINCT order_id), 0)",
+      "source": "vw_sales",
+      "unit": "TRY",
+      "format": "#,##0.00",
+      "aliases": ["ortalama sepet", "sepet ortalamasi"],
+      "approvalStatus": "documented",
+      "approvalNote": "KPI adi 11-sprint-11-gun.md:57'de gecer. NULLIF, sifira bolmeyi engeller; DB hatasindan deger cikarimini (hata tabanli sizinti) da onler.",
+      "dependsOn": ["net_sales", "order_count"]
+    },
+
+    "growth_rate": {
+      "label": "Buyume",
+      "kind": "periodOverPeriod",
+      "expression": null,
+      "source": "vw_sales",
+      "unit": "percent",
+      "format": "0.0%",
+      "aliases": ["buyume", "buyume orani", "artis"],
+      "approvalStatus": "designPending",
+      "approvalNote": "KPI adi 11-sprint-11-gun.md:57'de gecer ANCAK tek bir SQL ifadesiyle tanimlanamaz: donem-uzeri-donem karsilastirmasi gerektirir. Karsilastirma tabani (onceki donem / gecen yil ayni donem) ve kismi donem davranisi is birimi tarafindan kararlastirilmalidir. Karar gelmeden expression yazilmayacaktir."
+    }
+  },
+
+  "dimensions": {
+    "region": {
+      "label": "Bolge",
+      "column": "region",
+      "source": "vw_sales",
+      "valueType": "text",
+      "aliases": ["bolge", "bolgeler", "bolgeye gore"],
+      "isScopeDimension": true,
+      "note": "Veri kapsami (yetki) bu boyut uzerinden zorlanir. Kullanicinin talebinde region filtresi olsa dahi guardrail kendi filtresini AGACTAKI HER QuerySpecification'a ayrica enjekte eder."
+    },
+    "product_category": {
+      "label": "Urun Kategorisi",
+      "column": "product_category",
+      "source": "vw_sales",
+      "valueType": "text",
+      "aliases": ["urun kategorisi", "kategori"]
+    },
+    "store_id": {
+      "label": "Magaza",
+      "column": "store_id",
+      "source": "vw_sales",
+      "valueType": "integer",
+      "aliases": ["magaza", "magaza bazinda"]
+    },
+    "order_date": {
+      "label": "Siparis Tarihi",
+      "column": "order_date",
+      "source": "vw_sales",
+      "valueType": "date",
+      "isTimeDimension": true,
+      "aliases": ["tarih", "siparis tarihi"]
+    },
+    "customer_segment": {
+      "label": "Musteri Segmenti",
+      "column": "segment",
+      "source": "vw_customer",
+      "valueType": "text",
+      "aliases": ["segment", "musteri segmenti"]
+    },
+    "channel": {
+      "label": "Kanal",
+      "column": "channel",
+      "source": "vw_campaign",
+      "valueType": "text",
+      "aliases": ["kanal"]
+    }
+  },
+
+  "useCases": {
+    "sales_analysis": {
+      "label": "Satis Analizi",
+      "status": "ready",
+      "metrics": ["net_sales", "order_count", "avg_basket"],
+      "dimensions": ["region", "product_category", "store_id", "order_date"],
+      "note": "growth_rate, tasarim karari gelene kadar bu use case'in disinda tutulur."
+    },
+
+    "customer_segmentation": {
+      "label": "Musteri Segmentasyonu",
+      "status": "blocked",
+      "metrics": [],
+      "dimensions": ["customer_segment", "region"],
+      "blockedReason": "11-sprint-11-gun.md:129 bu senaryoyu 'RFM benzeri' olarak tanimliyor ancak metrik adlari ve tanimlari hicbir dokumanda yok. Ayrica ornek allow-list'teki vw_customer kolonlari (customer_id, segment, first_order_date, city, region) RFM icin YETERSIZ: Recency, son siparis tarihi gerektirir, first_order_date ILK siparis tarihidir. Uydurma metrik yazilmayacaktir.",
+      "needsFromDataEngineer": ["son siparis tarihi kolonu (recency icin)", "siparis sikligi ve parasal toplam icin agregasyon kaynagi"],
+      "needsFromBusiness": ["RFM skor esikleri ve segment adlari", "segmentin onceden hesaplanmis mi (vw_customer.segment) yoksa sorgu aninda mi uretilecegi"]
+    },
+
+    "campaign_performance": {
+      "label": "Kampanya Performansi",
+      "status": "blocked",
+      "metrics": [],
+      "dimensions": ["channel", "region"],
+      "blockedReason": "ORNEK ALLOW-LIST ILE TEKNIK OLARAK IMKANSIZ. Iki ayri eksik var: (1) vw_sales'te campaign_id YOK, yalnizca campaign_flag (boolean) var — hangi siparisin hangi kampanyaya ait oldugu bilinemez; (2) allow-list'teki joinPaths yalnizca vw_sales -> vw_customer yolunu tanimliyor, vw_campaign'e giden bir yol YOK, dolayisiyla guardrail'in JoinPathAllowed kontrolu bu birlesimi zaten reddeder.",
+      "needsFromDataEngineer": ["vw_sales.campaign_id kolonu veya siparis-kampanya kopru gorunumu", "vw_sales -> vw_campaign icin tanimli JOIN yolu"],
+      "needsFromBusiness": ["kampanya performansinin hangi metriklerle olculecegi (ciro/adet/donusum/ROI?)"]
+    }
+  }
+}

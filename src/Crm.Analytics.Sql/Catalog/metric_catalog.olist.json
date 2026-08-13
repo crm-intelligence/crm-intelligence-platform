@@ -1,0 +1,356 @@
+{
+  "_meta": {
+    "status": "GORUNUM BEKLIYOR — olist_views.contract.sql'deki gorunumlere dayanir",
+    "source": "data/fixtures/olist/ kolon adlari dogrulanarak yazildi (2026-07-30).",
+    "aliasConvention": "expression alanlarinda tablo alias'i KULLANILMAZ, yalnizca kolon adi yazilir. CatalogValidator kolonun hangi objeye ait oldugunu allow-list'ten cozer; Query Builder AST uzerinde dogru alias ile niteler. Boylece string birlestirme de, alias cakismasi da olmaz.",
+    "netSalesDecision": "\"Net satis\"in price mi, price+freight_value mi oldugu IS KARARIDIR ve BI onayina birakilmistir. Iki aday da ayri metrik olarak tanimli ve ikisi de businessApprovalPending. Karar gelene kadar hicbiri 'net_sales' anahtarini almadi — sessiz varsayim yapilmadi."
+  },
+
+  "metrics": {
+    "item_sales": {
+      "label": "Urun Satis Tutari",
+      "description": "Satilan urun kalemlerinin kargo haric fiyat toplami.",
+      "kind": "aggregate",
+      "expression": "SUM(price)",
+      "source": "vw_sales",
+      "unit": "BRL",
+      "valueType": "currency",
+      "format": "#,##0.00",
+      "aliases": ["satis tutari", "urun tutari", "ciro", "item sales", "sales amount"],
+      "compatibleDimensions": ["customer_state", "customer_city", "product_category", "order_status", "order_purchase_timestamp"],
+      "compatibleFilters": ["customer_state", "customer_city", "product_category", "order_status", "order_purchase_timestamp"],
+      "requiresDateRange": true,
+      "queryMappingReference": "metric.item_sales.v1",
+      "approvalStatus": "businessApprovalPending",
+      "approvalNote": "\"Net satis\" adayi 1: kargo HARIC. Adlandirma karari BI'dan bekleniyor."
+    },
+
+    "customer_paid_total": {
+      "label": "Musteri Odemesi (Urun + Kargo)",
+      "description": "Musterinin urun ve kargo icin odedigi toplam tutar.",
+      "kind": "aggregate",
+      "expression": "SUM(price + freight_value)",
+      "source": "vw_sales",
+      "unit": "BRL",
+      "valueType": "currency",
+      "format": "#,##0.00",
+      "aliases": ["musterinin odedigi", "toplam tutar", "customer paid total", "paid amount"],
+      "compatibleDimensions": ["customer_state", "customer_city", "product_category", "order_status", "order_purchase_timestamp"],
+      "compatibleFilters": ["customer_state", "customer_city", "product_category", "order_status", "order_purchase_timestamp"],
+      "requiresDateRange": true,
+      "queryMappingReference": "metric.customer_paid_total.v1",
+      "approvalStatus": "businessApprovalPending",
+      "approvalNote": "\"Net satis\" adayi 2: kargo DAHIL. Adlandirma karari BI'dan bekleniyor."
+    },
+
+    "freight_total": {
+      "label": "Kargo Tutari",
+      "description": "Siparis kalemlerine ait kargo ucretlerinin toplami.",
+      "kind": "aggregate",
+      "expression": "SUM(freight_value)",
+      "source": "vw_sales",
+      "unit": "BRL",
+      "valueType": "currency",
+      "format": "#,##0.00",
+      "aliases": ["kargo", "kargo tutari", "navlun", "freight", "shipping amount"],
+      "compatibleDimensions": ["customer_state", "customer_city", "product_category", "order_status", "order_purchase_timestamp"],
+      "compatibleFilters": ["customer_state", "customer_city", "product_category", "order_status", "order_purchase_timestamp"],
+      "requiresDateRange": true,
+      "queryMappingReference": "metric.freight_total.v1",
+      "approvalStatus": "documented"
+    },
+
+    "order_count": {
+      "label": "Siparis Sayisi",
+      "description": "Tekil siparislerin sayisi; siparis kalemi sayisi degildir.",
+      "kind": "aggregate",
+      "expression": "COUNT(DISTINCT order_id)",
+      "source": "vw_sales",
+      "unit": "count",
+      "valueType": "integer",
+      "format": "#,##0",
+      "aliases": ["siparis sayisi", "siparis adedi", "order count", "number of orders"],
+      "compatibleDimensions": ["customer_state", "customer_city", "product_category", "order_status", "order_purchase_timestamp"],
+      "compatibleFilters": ["customer_state", "customer_city", "product_category", "order_status", "order_purchase_timestamp"],
+      "requiresDateRange": true,
+      "queryMappingReference": "metric.order_count.v1",
+      "approvalStatus": "documented"
+    },
+
+    "item_count": {
+      "label": "Satilan Kalem Sayisi",
+      "description": "Siparislerdeki satir veya urun kalemi sayisi.",
+      "kind": "aggregate",
+      "expression": "COUNT(*)",
+      "source": "vw_sales",
+      "unit": "count",
+      "valueType": "integer",
+      "format": "#,##0",
+      "aliases": ["kalem sayisi", "urun adedi", "item count", "sold items"],
+      "compatibleDimensions": ["customer_state", "customer_city", "product_category", "order_status", "order_purchase_timestamp"],
+      "compatibleFilters": ["customer_state", "customer_city", "product_category", "order_status", "order_purchase_timestamp"],
+      "requiresDateRange": true,
+      "queryMappingReference": "metric.item_count.v1",
+      "approvalStatus": "documented",
+      "approvalNote": "Siparis sayisindan farklidir: bir siparis birden fazla kalem icerir (112.650 kalem / 99.441 siparis)."
+    },
+
+    "avg_basket": {
+      "label": "Ortalama Sepet",
+      "description": "Kargo haric urun satis tutarinin tekil siparis sayisina orani.",
+      "kind": "ratio",
+      "expression": "SUM(price) / NULLIF(COUNT(DISTINCT order_id), 0)",
+      "source": "vw_sales",
+      "unit": "BRL",
+      "valueType": "currency",
+      "format": "#,##0.00",
+      "aliases": ["ortalama sepet", "sepet ortalamasi", "average basket", "average order value"],
+      "compatibleDimensions": ["customer_state", "customer_city", "product_category", "order_status", "order_purchase_timestamp"],
+      "compatibleFilters": ["customer_state", "customer_city", "product_category", "order_status", "order_purchase_timestamp"],
+      "requiresDateRange": true,
+      "queryMappingReference": "metric.avg_basket.v1",
+      "approvalStatus": "businessApprovalPending",
+      "approvalNote": "Pay olarak item_sales kullanildi; customer_paid_total secilirse bu ifade de guncellenmelidir. NULLIF sifira bolmeyi ve hata tabanli deger cikarimini engeller.",
+      "dependsOn": ["item_sales", "order_count"]
+    },
+
+    "payment_total": {
+      "label": "Odeme Tutari",
+      "description": "Odeme kayitlarindaki tahsil edilen tutarlarin toplami.",
+      "kind": "aggregate",
+      "expression": "SUM(payment_value)",
+      "source": "vw_payment",
+      "unit": "BRL",
+      "valueType": "currency",
+      "format": "#,##0.00",
+      "aliases": ["odeme tutari", "tahsilat", "payment total", "collected amount"],
+      "compatibleDimensions": ["payment_type", "payment_order_timestamp"],
+      "compatibleFilters": ["payment_type", "payment_order_timestamp"],
+      "requiresDateRange": true,
+      "queryMappingReference": "metric.payment_total.v1",
+      "approvalStatus": "documented",
+      "approvalNote": "vw_sales tutarlariyla AYNI SORGUDA kullanilmamalidir: bir siparisin birden fazla odeme kaydi olabilir (103.886 odeme / 99.441 siparis), tutarlar coklanir."
+    },
+
+    "avg_installments": {
+      "label": "Ortalama Taksit Sayisi",
+      "description": "Odeme kayitlarindaki ortalama taksit adedi.",
+      "kind": "aggregate",
+      "expression": "AVG(CAST(payment_installments AS DECIMAL(10, 2)))",
+      "source": "vw_payment",
+      "unit": "count",
+      "valueType": "decimal",
+      "format": "#,##0.0",
+      "aliases": ["taksit", "ortalama taksit", "average installments", "installment average"],
+      "compatibleDimensions": ["payment_type", "payment_order_timestamp"],
+      "compatibleFilters": ["payment_type", "payment_order_timestamp"],
+      "requiresDateRange": true,
+      "queryMappingReference": "metric.avg_installments.v1",
+      "approvalStatus": "documented",
+      "approvalNote": "CAST gerekli: tamsayi bolmesi ortalamayi asagi yuvarlardi."
+    },
+
+    "customer_count": {
+      "label": "Musteri Sayisi",
+      "description": "Tekil musterilerin sayisi.",
+      "kind": "aggregate",
+      "expression": "COUNT(DISTINCT customer_unique_id)",
+      "source": "vw_customer_rfm",
+      "unit": "count",
+      "valueType": "integer",
+      "format": "#,##0",
+      "aliases": ["musteri sayisi", "kac musteri", "customer count", "number of customers"],
+      "compatibleDimensions": ["rfm_customer_state", "rfm_customer_city"],
+      "compatibleFilters": ["rfm_customer_state", "rfm_customer_city"],
+      "requiresDateRange": false,
+      "queryMappingReference": "metric.customer_count.v1",
+      "approvalStatus": "documented",
+      "approvalNote": "customer_id DEGIL customer_unique_id kullanildi: Olist'te customer_id siparis basina uretilir (customers ve orders tablolari birebir ayni satir sayisina sahip), gercek kisiyi customer_unique_id temsil eder."
+    },
+
+    "avg_monetary": {
+      "label": "Musteri Basina Ortalama Harcama",
+      "description": "Tekil musteri kayitlarindaki ortalama urun harcamasi.",
+      "kind": "aggregate",
+      "expression": "AVG(total_price)",
+      "source": "vw_customer_rfm",
+      "unit": "BRL",
+      "valueType": "currency",
+      "format": "#,##0.00",
+      "aliases": ["musteri basina harcama", "ortalama harcama", "average customer spend", "average monetary"],
+      "compatibleDimensions": ["rfm_customer_state", "rfm_customer_city"],
+      "compatibleFilters": ["rfm_customer_state", "rfm_customer_city"],
+      "requiresDateRange": false,
+      "queryMappingReference": "metric.avg_monetary.v1",
+      "approvalStatus": "documented"
+    },
+
+    "avg_frequency": {
+      "label": "Musteri Basina Ortalama Siparis",
+      "description": "Tekil musteri basina ortalama siparis sayisi.",
+      "kind": "aggregate",
+      "expression": "AVG(CAST(order_count AS DECIMAL(10, 2)))",
+      "source": "vw_customer_rfm",
+      "unit": "count",
+      "valueType": "decimal",
+      "format": "#,##0.0",
+      "aliases": ["siparis sikligi", "frequency", "average order frequency"],
+      "compatibleDimensions": ["rfm_customer_state", "rfm_customer_city"],
+      "compatibleFilters": ["rfm_customer_state", "rfm_customer_city"],
+      "requiresDateRange": false,
+      "queryMappingReference": "metric.avg_frequency.v1",
+      "approvalStatus": "documented"
+    },
+
+    "recency_days": {
+      "label": "Son Siparisten Bu Yana Gecen Gun",
+      "description": "Referans tarihe gore son siparisten beri gecen gun sayisi.",
+      "kind": "periodOverPeriod",
+      "expression": null,
+      "source": "vw_customer_rfm",
+      "unit": "days",
+      "valueType": "duration",
+      "format": "#,##0",
+      "aliases": ["recency", "son siparis", "recency days"],
+      "compatibleDimensions": ["rfm_customer_state", "rfm_customer_city"],
+      "compatibleFilters": ["rfm_customer_state", "rfm_customer_city"],
+      "requiresDateRange": false,
+      "queryMappingReference": "metric.recency_days.v1",
+      "approvalStatus": "designPending",
+      "approvalNote": "REFERANS TARIH KARARI GEREKIYOR. Olist verisi 2018'de bitiyor; GETDATE() kullanilirsa tum musteriler ~8 yil once alisveris yapmis gorunur ve RFM segmentasyonu anlamsizlasir. Referans, veri setindeki en son siparis tarihi mi olacak yoksa sabit bir tarih mi? Karar gelmeden ifade yazilmayacaktir."
+    }
+  },
+
+  "dimensions": {
+    "customer_state": {
+      "label": "Eyalet",
+      "description": "Siparis musterisinin eyalet kodu.",
+      "column": "customer_state",
+      "source": "vw_sales",
+      "valueType": "text",
+      "aliases": ["eyalet", "bolge", "state", "customer state"],
+      "compatibleMetrics": ["item_sales", "customer_paid_total", "freight_total", "order_count", "item_count", "avg_basket"],
+      "queryMappingReference": "dimension.customer_state.sales.v1",
+      "isScopeDimension": true,
+      "note": "Veri kapsami (yetki) bu boyut uzerinden zorlanir. Guardrail, kullanicinin talebinde bu filtre olsa dahi kendi filtresini agactaki HER sorgu blokuna ayrica enjekte eder."
+    },
+    "customer_city": {
+      "label": "Sehir",
+      "description": "Siparis musterisinin sehri.",
+      "column": "customer_city",
+      "source": "vw_sales",
+      "valueType": "text",
+      "aliases": ["sehir", "il", "city", "customer city"],
+      "compatibleMetrics": ["item_sales", "customer_paid_total", "freight_total", "order_count", "item_count", "avg_basket"],
+      "queryMappingReference": "dimension.customer_city.sales.v1",
+      "note": "Ince kirilimda kimlik ifsasi riski tasir (kucuk sehir + kategori = tek kisi). MinCellSize kontrolu bunu ele alir."
+    },
+    "product_category": {
+      "label": "Urun Kategorisi",
+      "description": "Satilan urunun is kategorisi.",
+      "column": "product_category",
+      "source": "vw_sales",
+      "valueType": "text",
+      "aliases": ["kategori", "urun kategorisi", "product category", "category"],
+      "compatibleMetrics": ["item_sales", "customer_paid_total", "freight_total", "order_count", "item_count", "avg_basket"],
+      "queryMappingReference": "dimension.product_category.sales.v1",
+      "note": "Kategorisi bulunmayan kalemler 'uncategorized' olarak gelir; gorunumdeki COALESCE sessiz NULL grubunu engeller."
+    },
+    "order_status": {
+      "label": "Siparis Durumu",
+      "description": "Siparis yasam dongusu durumu.",
+      "column": "order_status",
+      "source": "vw_sales",
+      "valueType": "text",
+      "aliases": ["durum", "siparis durumu", "order status"],
+      "compatibleMetrics": ["item_sales", "customer_paid_total", "freight_total", "order_count", "item_count", "avg_basket"],
+      "queryMappingReference": "dimension.order_status.sales.v1"
+    },
+    "payment_type": {
+      "label": "Odeme Tipi",
+      "description": "Odemenin kart, kupon veya benzeri yontem sinifi.",
+      "column": "payment_type",
+      "source": "vw_payment",
+      "valueType": "text",
+      "aliases": ["odeme tipi", "odeme kanali", "payment type", "payment method"],
+      "compatibleMetrics": ["payment_total", "avg_installments"],
+      "queryMappingReference": "dimension.payment_type.v1"
+    },
+    "order_purchase_timestamp": {
+      "label": "Siparis Tarihi",
+      "description": "Siparisin olusturuldugu tarih ve zaman.",
+      "column": "order_purchase_timestamp",
+      "source": "vw_sales",
+      "valueType": "date",
+      "isTimeDimension": true,
+      "aliases": ["tarih", "siparis tarihi", "order date", "purchase date"],
+      "compatibleMetrics": ["item_sales", "customer_paid_total", "freight_total", "order_count", "item_count", "avg_basket"],
+      "queryMappingReference": "dimension.order_purchase_timestamp.sales.v1"
+    },
+    "payment_order_timestamp": {
+      "label": "Odeme Siparis Tarihi",
+      "description": "Odemenin bagli oldugu siparis tarihi.",
+      "column": "order_purchase_timestamp",
+      "source": "vw_payment",
+      "valueType": "date",
+      "isTimeDimension": true,
+      "aliases": ["odeme tarihi", "payment date"],
+      "compatibleMetrics": ["payment_total", "avg_installments"],
+      "queryMappingReference": "dimension.order_purchase_timestamp.payment.v1"
+    },
+    "rfm_customer_state": {
+      "label": "Musteri Eyaleti",
+      "description": "Tekil musterinin eyalet kodu.",
+      "column": "customer_state",
+      "source": "vw_customer_rfm",
+      "valueType": "text",
+      "aliases": ["musteri eyaleti", "rfm customer state"],
+      "compatibleMetrics": ["customer_count", "avg_monetary", "avg_frequency", "recency_days"],
+      "queryMappingReference": "dimension.customer_state.rfm.v1"
+    },
+    "rfm_customer_city": {
+      "label": "Musteri Sehri",
+      "description": "Tekil musterinin sehri.",
+      "column": "customer_city",
+      "source": "vw_customer_rfm",
+      "valueType": "text",
+      "aliases": ["musteri sehri", "rfm customer city"],
+      "compatibleMetrics": ["customer_count", "avg_monetary", "avg_frequency", "recency_days"],
+      "queryMappingReference": "dimension.customer_city.rfm.v1"
+    }
+  },
+
+  "useCases": {
+    "sales_analysis": {
+      "label": "Satis Analizi",
+      "status": "ready",
+      "metrics": ["item_sales", "customer_paid_total", "order_count", "item_count", "avg_basket", "freight_total"],
+      "dimensions": ["customer_state", "customer_city", "order_status", "order_purchase_timestamp"]
+    },
+
+    "category_performance": {
+      "label": "Kategori Performansi",
+      "status": "ready",
+      "metrics": ["item_sales", "order_count", "item_count", "avg_basket"],
+      "dimensions": ["product_category", "customer_state", "order_purchase_timestamp"],
+      "note": "Sprintin ucuncu demo senaryosu. Kampanya performansinin YERINE gecer: Olist verisinde kampanya tablosu da campaign_id kolonu da yoktur, o senaryo bu veriyle kurulamaz."
+    },
+
+    "customer_segmentation": {
+      "label": "Musteri Segmentasyonu",
+      "status": "partial",
+      "metrics": ["customer_count", "avg_monetary", "avg_frequency"],
+      "dimensions": ["rfm_customer_state", "rfm_customer_city"],
+      "blockedReason": "RFM'in R (Recency) bacagi eksik: recency_days icin referans tarih karari bekleniyor. Frequency ve Monetary hazir, segmentasyon bunlarla kismen calisir.",
+      "needsFromBusiness": ["recency referans tarihi (veri setinin son tarihi mi, sabit tarih mi)", "RFM skor esikleri ve segment adlari"]
+    },
+
+    "campaign_performance": {
+      "label": "Kampanya Performansi",
+      "status": "impossible",
+      "metrics": [],
+      "dimensions": [],
+      "blockedReason": "Olist veri setinde kampanya bilgisi YOK: ne kampanya tablosu ne de siparisi kampanyaya baglayan bir kolon var. Bu senaryo bu veriyle kurulamaz; yerine category_performance tanimlandi. Uydurma veri uretilmedi."
+    }
+  }
+}

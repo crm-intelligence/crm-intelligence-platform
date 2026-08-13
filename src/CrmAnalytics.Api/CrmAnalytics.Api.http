@@ -1,0 +1,108 @@
+@CrmAnalyticsApi_HostAddress = https://localhost:7090
+@ReportRequestId = replace-with-request-id
+@CompletedReportRequestId = replace-with-completed-request-id
+@ConversationId = teams-conversation-001
+@accessToken = REPLACE_WITH_API_ACCESS_TOKEN
+
+# Development mode (ASPNETCORE_ENVIRONMENT=Development) sabit yerel fake
+# principal kullandığı için Authorization header gerektirmez.
+# Entra mode kullanırken aşağıdaki satırı tüm korumalı isteklere ekleyin:
+# Authorization: Bearer {{accessToken}}
+# Access token oid, tid, scp: access_as_user ve örneğin roles: Report.User
+# claim'lerini taşımalıdır. Gerçek token'ı bu dosyaya yazmayın.
+# App role tek başına yeterli değildir: processing başlatan POST'lar için
+# backend ReportDataAccess assignment'ı da gerekir.
+# Production create/revise/clarification için exact SQL data assignment gerekir.
+# Eksik assignment 403 ACCESS_DENIED; bozuk assignment ayrıntı sızdırmayan
+# 500 DATA_ACCESS_POLICY_ERROR üretir. Audit event'leri public API ile okunamaz.
+# Prompt, clarification cevabı, canonical JSON ve SQL audit tablosuna yazılmaz.
+# Development fake user ve allow-all assignment appsettings.Development.json
+# içindeki aynı sahte GUID'lerden gelir.
+# Report.Viewer ile POST 403 olur; ownership uygunsa GET/history izinlidir ve
+# bu okuma işlemleri güncel data-scope assignment gerektirmez.
+# InMemory provider restart sonrasında report ve conversation kayıtlarını
+# kaybeder; SqlServer provider kullanılırsa bu kayıtlar korunur.
+# Authentication, role, ownership ve data-scope gereksinimleri provider'dan
+# bağımsızdır. CanonicalRequestJson, SQL ve rejection code hiçbir GET
+# response'unda gösterilmez.
+
+### Create a Report Request
+# Queue Enabled=true iken 202 cevabı Received döner; status kısa süre içinde değişebilir.
+
+# @name createReportRequest
+POST {{CrmAnalyticsApi_HostAddress}}/api/report-requests
+Content-Type: application/json
+# Authorization: Bearer {{accessToken}}
+
+{
+  "prompt": "Son 30 günün CRM satış trendlerini göster.",
+  "conversationId": "{{ConversationId}}"
+}
+
+> {%
+    client.global.set("ReportRequestId", response.body.requestId);
+%}
+
+### Poll the Created Report Request
+# POST sonrasında bu GET çağrısını Completed, Failed veya WaitingForClarification
+# durumlarından biri görülene kadar belirli aralıklarla ve süre sınırıyla sorgulayın.
+
+GET {{CrmAnalyticsApi_HostAddress}}/api/report-requests/{{ReportRequestId}}
+Accept: application/json
+# Authorization: Bearer {{accessToken}}
+
+### Revise a Completed Report Request
+# Queue Enabled=true olduğunda önceki POST kısa süre içinde otomatik tamamlanabilir.
+# CompletedReportRequestId tamamlanmış bir talebin kimliği olmalıdır.
+
+# @name reviseReportRequest
+POST {{CrmAnalyticsApi_HostAddress}}/api/report-requests/{{CompletedReportRequestId}}/revise
+Content-Type: application/json
+# Authorization: Bearer {{accessToken}}
+
+{
+  "prompt": "Satış adedi yerine net kârı göster."
+}
+
+> {%
+    client.global.set("RevisedReportRequestId", response.body.requestId);
+%}
+
+### Get the Newly Created Revision
+# RevisedReportRequestId, yukarıdaki 202 response içindeki requestId değeridir.
+# Revizyon da otomatik işlendiği için bu GET çağrısını süre sınırlı olarak tekrarlayın.
+
+GET {{CrmAnalyticsApi_HostAddress}}/api/report-requests/{{RevisedReportRequestId}}
+Accept: application/json
+# Authorization: Bearer {{accessToken}}
+
+### Get Report Request By ID
+
+GET {{CrmAnalyticsApi_HostAddress}}/api/report-requests/{{ReportRequestId}}
+Accept: application/json
+# Authorization: Bearer {{accessToken}}
+
+### Get Conversation Report Request History
+
+GET {{CrmAnalyticsApi_HostAddress}}/api/conversations/{{ConversationId}}/report-requests
+Accept: application/json
+# Authorization: Bearer {{accessToken}}
+
+### Entra Mode Bearer Access Token Example
+# accessToken API için verilmiş access token olmalıdır; ID token kullanmayın.
+# Beklenen temel claim'ler: oid, tid, scp=access_as_user ve roles içinde
+# configuration'da tanımlı exact/case-sensitive bir app role.
+
+GET {{CrmAnalyticsApi_HostAddress}}/api/report-requests/{{ReportRequestId}}
+Accept: application/json
+Authorization: Bearer {{accessToken}}
+
+### Health Check
+
+GET {{CrmAnalyticsApi_HostAddress}}/health
+Accept: application/json
+
+### OpenAPI Document
+
+GET {{CrmAnalyticsApi_HostAddress}}/openapi/v1.json
+Accept: application/json

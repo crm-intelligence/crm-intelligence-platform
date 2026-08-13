@@ -1,0 +1,48 @@
+{
+  "_meta": {
+    "contractVersion": "fabric-oltp-operational-orders-v1",
+    "source": "Fabric SQL Database metadata discovery through approved sys catalog sources and OBJECT_DEFINITION on 2026-08-05.",
+    "grainEvidence": "The view starts from dbo.orders and joins aggregates grouped by order_id; order_id is the proven order-level identifier.",
+    "piiPolicy": "customer_id and customer_unique_id are excluded because identity/security classification is not proven.",
+    "capabilityPolicy": "Only metadata-proven, non-PII columns are selectable. Status enum values are undocumented, so status filtering is disabled. No aggregate metric is exposed."
+  },
+  "objects": {
+    "operational_orders": {
+      "physicalName": "dbo.vw_operational_orders",
+      "columns": [
+        "order_id",
+        "customer_city",
+        "customer_state",
+        "order_status",
+        "order_purchase_timestamp",
+        "approved_at",
+        "shipped_at",
+        "delivered_at",
+        "cancelled_at"
+      ],
+      "scopeColumn": "customer_state",
+      "joinPaths": [],
+      "stableOrderColumns": [
+        "order_purchase_timestamp",
+        "order_id"
+      ]
+    }
+  },
+  "scenarioObjects": {},
+  "deniedColumns": [
+    "customer_id",
+    "customer_unique_id"
+  ],
+  "identityColumns": [
+    "order_id"
+  ],
+  "allowedFunctions": [],
+  "maxJoins": 0,
+  "maxRows": 1000,
+  "defaultRows": 100,
+  "queryTimeoutSeconds": 15,
+  "maxDateRangeDays": 31,
+  "maxInputLength": 4000,
+  "minCellSize": 1,
+  "allowIdentityDetail": true
+}
