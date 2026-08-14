@@ -2,6 +2,7 @@ using Crm.Analytics.Sql.Audit;
 using Crm.Analytics.Sql.Catalog;
 using Crm.Analytics.Sql.Service;
 using CrmAnalytics.Application.Abstractions.Integrations;
+using CrmAnalytics.Application.SqlAgent;
 using CrmAnalytics.Application.SqlProduction;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -39,6 +40,23 @@ public static class SqlProductionServiceCollectionExtensions
         services.AddSingleton<IValidateOptions<SemanticEmbeddingOptions>,
             SemanticEmbeddingOptionsValidator>();
 
+        services.AddSingleton<SqlProductionScopeCompatibilityMapper>();
+        services.AddSingleton(_ => SemanticCatalogRegistry.CreateDefault());
+        services.AddSingleton<IDecisionAuditWriter,
+            SafeSqlDecisionAuditWriter>();
+        services.AddSingleton<ISqlAgentBackend>(serviceProvider =>
+        {
+            var configured = serviceProvider.GetRequiredService<
+                IOptions<SqlProductionProviderOptions>>().Value;
+            return SqlProductionFactory.CreateSqlAgentBackendForOlist(
+                serviceProvider.GetRequiredService<IDecisionAuditWriter>(),
+                new Crm.Analytics.Sql.Service.SqlProductionOptions(
+                    configured.ConfidenceThreshold,
+                    configured.SqlVersionName),
+                serviceProvider.GetRequiredService<SemanticCatalogRegistry>());
+        });
+        services.AddScoped<ISqlAgentService, SqlAgentService>();
+
         var provider = configuration[
             $"{SqlProductionProviderOptions.SectionName}:Provider"];
         var ollamaEnabled = configuration.GetValue<bool>(
@@ -52,8 +70,6 @@ public static class SqlProductionServiceCollectionExtensions
             return services;
         }
 
-        services.AddSingleton<SqlProductionScopeCompatibilityMapper>();
-        services.AddSingleton(_ => SemanticCatalogRegistry.CreateDefault());
         services.AddSingleton<OllamaCanonicalContract>();
         services.AddSingleton<SemanticDocumentFactory>();
         services.AddHttpClient<ISemanticEmbeddingClient,
@@ -89,8 +105,6 @@ public static class SqlProductionServiceCollectionExtensions
             httpClient.Timeout = TimeSpan.FromSeconds(
                 configured.TimeoutSeconds);
         });
-        services.AddSingleton<IDecisionAuditWriter,
-            SafeSqlDecisionAuditWriter>();
         services.AddSingleton<ISqlProductionService>(serviceProvider =>
         {
             var configured = serviceProvider.GetRequiredService<
