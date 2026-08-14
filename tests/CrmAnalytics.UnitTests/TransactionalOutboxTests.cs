@@ -3,6 +3,7 @@ using CrmAnalytics.Application.Conversations;
 using CrmAnalytics.Application.Outbox;
 using CrmAnalytics.Application.ReportProcessing;
 using CrmAnalytics.Application.ReportRequests;
+using CrmAnalytics.Application.Identity;
 using CrmAnalytics.Domain.ReportRequests;
 using CrmAnalytics.Infrastructure.Auditing;
 using CrmAnalytics.Infrastructure.Messaging;
@@ -24,6 +25,53 @@ public sealed class TransactionalOutboxTests
 {
     private static readonly DateTimeOffset Now =
         new(2026, 7, 31, 10, 0, 0, TimeSpan.Zero);
+
+    [Fact]
+    public async Task AgenticRoutedCreation_PersistsBindingWithoutProcessingOutbox()
+    {
+        var reports = new InMemoryReportRequestRepository();
+        var outbox = new InMemoryOutboxStore();
+        var service = CreateReportService(reports, outbox);
+        var user = TestUser();
+
+        var result = await service.CreatePlannedAwaitingAgenticAsync(
+            new CreateReportRequestCommand(
+                "Prompt", "agentic-conversation", null, "correlation"),
+            user,
+            SubmittedPlan(),
+            "{}",
+            CancellationToken.None);
+
+        Assert.Equal(ReportRequestStatus.Processing, result.Status);
+        Assert.DoesNotContain(outbox.Snapshot, item =>
+            item.Message.MessageType
+                == OutboxMessageType.ReportProcessingRequested);
+        var persisted = await reports.GetByIdAsync(
+            result.RequestId, CancellationToken.None);
+        Assert.Equal("{}", persisted?.CanonicalRequestJson);
+    }
+
+    [Fact]
+    public async Task UnsupportedRoutedCreation_RejectsWithoutProcessingOutbox()
+    {
+        var reports = new InMemoryReportRequestRepository();
+        var outbox = new InMemoryOutboxStore();
+        var service = CreateReportService(reports, outbox);
+
+        var result = await service.CreateRejectedPlannedAsync(
+            new CreateReportRequestCommand(
+                "Prompt", "unsupported-conversation", null, "correlation"),
+            TestUser(),
+            SubmittedPlan(),
+            "UNKNOWN_METRIC",
+            "The submitted analytical intent is not supported.",
+            CancellationToken.None);
+
+        Assert.Equal(ReportRequestStatus.Rejected, result.Status);
+        Assert.DoesNotContain(outbox.Snapshot, item =>
+            item.Message.MessageType
+                == OutboxMessageType.ReportProcessingRequested);
+    }
 
     [Fact]
     public async Task CompletedReport_WritesBoundedPreviewToDurableOutbox()
@@ -81,6 +129,35 @@ public sealed class TransactionalOutboxTests
         Assert.Equal(preview.DataPoints,
             envelope.VisualizationPreview.DataPoints);
     }
+
+    private static ReportRequestService CreateReportService(
+        InMemoryReportRequestRepository reports,
+        InMemoryOutboxStore outbox) => new(
+        reports,
+        new ConversationContextService(
+            new InMemoryConversationRepository(), reports),
+        new InMemoryApplicationTransactionRunner(),
+        new InMemoryApplicationAuditWriter(),
+        outbox,
+        new OutboxMessageFactory(new OutboxMessageSerializer()));
+
+    private static AuthenticatedUserContext TestUser() => new(
+        "11111111-1111-4111-8111-111111111111",
+        "22222222-2222-4222-8222-222222222222",
+        ["Report.User"]);
+
+    private static SubmittedSemanticPlanningResult SubmittedPlan() => new(
+        "accepted",
+        new SubmittedSemanticIntent(
+            "order_count",
+            ["customer_state"],
+            [],
+            new SubmittedDateIntent(
+                "absolute", null, null, "2018-01-01", "2018-12-31",
+                "none"),
+            null),
+        [],
+        null);
 
     [Fact]
     public void OutboxMessage_ValidatesAndRedactsPayload()

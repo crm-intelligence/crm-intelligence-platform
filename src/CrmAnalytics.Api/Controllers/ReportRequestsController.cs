@@ -6,6 +6,7 @@ using CrmAnalytics.Application.ReportRequests;
 using CrmAnalytics.Contracts.Common;
 using CrmAnalytics.Contracts.CopilotStudio;
 using CrmAnalytics.Contracts.ReportRequests;
+using CrmAnalytics.Contracts.SqlAgent;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -18,17 +19,21 @@ public sealed class ReportRequestsController : ControllerBase
 {
     private readonly IReportRequestService _reportRequestService;
     private readonly IReportRequestSubmissionService _submissionService;
+    private readonly IRoutedReportRequestSubmissionService
+        _routedSubmissionService;
     private readonly ICurrentUserContextAccessor _currentUserAccessor;
     private readonly IUserDataScopeResolver _userDataScopeResolver;
 
     public ReportRequestsController(
         IReportRequestService reportRequestService,
         IReportRequestSubmissionService submissionService,
+        IRoutedReportRequestSubmissionService routedSubmissionService,
         ICurrentUserContextAccessor currentUserAccessor,
         IUserDataScopeResolver userDataScopeResolver)
     {
         _reportRequestService = reportRequestService;
         _submissionService = submissionService;
+        _routedSubmissionService = routedSubmissionService;
         _currentUserAccessor = currentUserAccessor;
         _userDataScopeResolver = userDataScopeResolver;
     }
@@ -188,6 +193,47 @@ public sealed class ReportRequestsController : ControllerBase
             Message: "Rapor talebiniz alındı."));
     }
 
+    [HttpPost("planned-routed")]
+    [Authorize(Policy = AuthenticationPolicies.ReportsCreate)]
+    [RequestSizeLimit(131_072)]
+    [ProducesResponseType(
+        typeof(CopilotRoutedReportResponse),
+        StatusCodes.Status202Accepted)]
+    [ProducesResponseType(
+        typeof(ValidationProblemDetails),
+        StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(
+        typeof(SqlAgentErrorResponse),
+        StatusCodes.Status409Conflict)]
+    [ProducesResponseType(
+        typeof(SqlAgentErrorResponse),
+        StatusCodes.Status422UnprocessableEntity)]
+    public async Task<ActionResult<CopilotRoutedReportResponse>>
+        CreatePlannedRoutedAsync(
+            [FromBody] CopilotRoutedPlannedReportRequest request,
+            CancellationToken cancellationToken)
+    {
+        var correlationId = Activity.Current?.TraceId.ToString()
+            ?? HttpContext.TraceIdentifier;
+        var semanticPlan =
+            CopilotPlannedReportRequestNormalizer.Normalize(request.Plan);
+        var user = _currentUserAccessor.GetRequiredUser();
+        var userDataScope = await _userDataScopeResolver.ResolveRequiredAsync(
+            user, cancellationToken);
+        var result = await _routedSubmissionService.SubmitPlannedAsync(
+            new CreateReportRequestCommand(
+                request.Prompt,
+                request.ConversationId,
+                request.PreviousRequestId,
+                correlationId),
+            user,
+            userDataScope,
+            semanticPlan,
+            request.Intent,
+            cancellationToken);
+        return RoutedResult(result);
+    }
+
     [HttpPost("{requestId}/revise")]
     [Authorize(Policy = AuthenticationPolicies.ReportsReviseOwn)]
     [ProducesResponseType(
@@ -282,6 +328,50 @@ public sealed class ReportRequestsController : ControllerBase
             "Planned revision accepted."));
     }
 
+    [HttpPost("{requestId}/planned-revision-routed")]
+    [Authorize(Policy = AuthenticationPolicies.ReportsReviseOwn)]
+    [RequestSizeLimit(131_072)]
+    [ProducesResponseType(
+        typeof(CopilotRoutedReportResponse),
+        StatusCodes.Status202Accepted)]
+    [ProducesResponseType(
+        typeof(ValidationProblemDetails),
+        StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(
+        typeof(ApiErrorResponse),
+        StatusCodes.Status404NotFound)]
+    [ProducesResponseType(
+        typeof(SqlAgentErrorResponse),
+        StatusCodes.Status409Conflict)]
+    [ProducesResponseType(
+        typeof(SqlAgentErrorResponse),
+        StatusCodes.Status422UnprocessableEntity)]
+    public async Task<ActionResult<CopilotRoutedReportResponse>>
+        RevisePlannedRoutedAsync(
+            [FromRoute] string requestId,
+            [FromBody] CopilotRoutedPlannedRevisionRequest request,
+            CancellationToken cancellationToken)
+    {
+        var correlationId = Activity.Current?.TraceId.ToString()
+            ?? HttpContext.TraceIdentifier;
+        var semanticPlan =
+            CopilotPlannedReportRequestNormalizer.Normalize(request.Plan);
+        var user = _currentUserAccessor.GetRequiredUser();
+        var userDataScope = await _userDataScopeResolver.ResolveRequiredAsync(
+            user, cancellationToken);
+        var result = await _routedSubmissionService.RevisePlannedAsync(
+            new ReviseReportRequestCommand(
+                requestId,
+                request.RevisionInstruction,
+                correlationId),
+            user,
+            userDataScope,
+            semanticPlan,
+            request.Intent,
+            cancellationToken);
+        return RoutedResult(result);
+    }
+
     [HttpPost("{requestId}/clarifications")]
     [Authorize(Policy = AuthenticationPolicies.ReportsClarifyOwn)]
     [ProducesResponseType(
@@ -372,4 +462,56 @@ public sealed class ReportRequestsController : ControllerBase
             result.Status.ToString(),
             "Planned clarification accepted."));
     }
+
+    [HttpPost("{requestId}/planned-clarification-routed")]
+    [Authorize(Policy = AuthenticationPolicies.ReportsClarifyOwn)]
+    [RequestSizeLimit(131_072)]
+    [ProducesResponseType(
+        typeof(CopilotRoutedReportResponse),
+        StatusCodes.Status202Accepted)]
+    [ProducesResponseType(
+        typeof(ValidationProblemDetails),
+        StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(
+        typeof(ApiErrorResponse),
+        StatusCodes.Status404NotFound)]
+    [ProducesResponseType(
+        typeof(SqlAgentErrorResponse),
+        StatusCodes.Status409Conflict)]
+    [ProducesResponseType(
+        typeof(SqlAgentErrorResponse),
+        StatusCodes.Status422UnprocessableEntity)]
+    public async Task<ActionResult<CopilotRoutedReportResponse>>
+        SubmitPlannedClarificationRoutedAsync(
+            [FromRoute] string requestId,
+            [FromBody] CopilotRoutedPlannedClarificationRequest request,
+            CancellationToken cancellationToken)
+    {
+        var correlationId = Activity.Current?.TraceId.ToString()
+            ?? HttpContext.TraceIdentifier;
+        var semanticPlan =
+            CopilotPlannedReportRequestNormalizer.Normalize(request.Plan);
+        var user = _currentUserAccessor.GetRequiredUser();
+        var userDataScope = await _userDataScopeResolver.ResolveRequiredAsync(
+            user, cancellationToken);
+        var result = await _routedSubmissionService
+            .SubmitPlannedClarificationAsync(
+                new SubmitReportClarificationCommand(
+                    requestId,
+                    request.Answer,
+                    DateTimeOffset.UtcNow),
+                correlationId,
+                user,
+                userDataScope,
+                semanticPlan,
+                request.Intent,
+                cancellationToken);
+        return RoutedResult(result);
+    }
+
+    private ActionResult<CopilotRoutedReportResponse> RoutedResult(
+        RoutedReportRequestSubmissionResult result) =>
+        result.IsSuccessful
+            ? Accepted(result.Response)
+            : StatusCode(result.StatusCode, result.Error);
 }

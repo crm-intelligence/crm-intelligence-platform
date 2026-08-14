@@ -5,7 +5,18 @@ using CrmAnalytics.Contracts.SqlAgent;
 
 namespace CrmAnalytics.Application.SqlAgent;
 
-public interface ISqlAgentService
+public interface IPreparedSqlAgentCapabilityService
+{
+    Task<SqlAgentServiceResult<SqlAgentCapabilityResponse>>
+        AnalyzePreparedCapabilityAsync(
+            string requestId,
+            string conversationId,
+            string? canonicalRequestJson,
+            CopilotSqlAgentIntent intent,
+            CancellationToken cancellationToken);
+}
+
+public interface ISqlAgentService : IPreparedSqlAgentCapabilityService
 {
     Task<SqlAgentServiceResult<SqlAgentCapabilityResponse>> AnalyzeCapabilityAsync(
         SqlAgentIntentRequest request,

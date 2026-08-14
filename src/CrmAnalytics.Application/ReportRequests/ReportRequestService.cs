@@ -11,6 +11,13 @@ namespace CrmAnalytics.Application.ReportRequests;
 
 public sealed class ReportRequestService : IReportRequestService
 {
+    private enum RoutedPersistenceAction
+    {
+        DispatchDeterministic,
+        AwaitAgenticCandidate,
+        RejectUnsupported
+    }
+
     private readonly IReportRequestRepository _repository;
     private readonly IConversationContextService _conversationContextService;
     private readonly IReportRequestAccessService _accessService;
@@ -85,7 +92,9 @@ public sealed class ReportRequestService : IReportRequestService
     public Task<CreateReportRequestResult> CreateAsync(
         CreateReportRequestCommand command,
         CancellationToken cancellationToken) =>
-        CreateCoreAsync(command, null, null, cancellationToken);
+        CreateCoreAsync(command, null, null,
+            RoutedPersistenceAction.DispatchDeterministic,
+            null, null, null, cancellationToken);
 
     public Task<CreateReportRequestResult> CreateAsync(
         CreateReportRequestCommand command,
@@ -93,7 +102,9 @@ public sealed class ReportRequestService : IReportRequestService
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(user);
-        return CreateCoreAsync(command, user, null, cancellationToken);
+        return CreateCoreAsync(command, user, null,
+            RoutedPersistenceAction.DispatchDeterministic,
+            null, null, null, cancellationToken);
     }
 
     public Task<CreateReportRequestResult> CreatePlannedAsync(
@@ -105,24 +116,60 @@ public sealed class ReportRequestService : IReportRequestService
         ArgumentNullException.ThrowIfNull(user);
         ArgumentNullException.ThrowIfNull(semanticPlan);
         return CreateCoreAsync(command, user, semanticPlan,
-            cancellationToken);
+            RoutedPersistenceAction.DispatchDeterministic,
+            null, null, null, cancellationToken);
+    }
+
+    public Task<CreateReportRequestResult> CreatePlannedAwaitingAgenticAsync(
+        CreateReportRequestCommand command,
+        AuthenticatedUserContext user,
+        SubmittedSemanticPlanningResult semanticPlan,
+        string canonicalRequestJson,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(user);
+        ArgumentNullException.ThrowIfNull(semanticPlan);
+        ArgumentException.ThrowIfNullOrWhiteSpace(canonicalRequestJson);
+        return CreateCoreAsync(command, user, semanticPlan,
+            RoutedPersistenceAction.AwaitAgenticCandidate,
+            canonicalRequestJson, null, null, cancellationToken);
+    }
+
+    public Task<CreateReportRequestResult> CreateRejectedPlannedAsync(
+        CreateReportRequestCommand command,
+        AuthenticatedUserContext user,
+        SubmittedSemanticPlanningResult semanticPlan,
+        string rejectionCode,
+        string rejectionMessage,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(user);
+        ArgumentNullException.ThrowIfNull(semanticPlan);
+        return CreateCoreAsync(command, user, semanticPlan,
+            RoutedPersistenceAction.RejectUnsupported,
+            null, rejectionCode, rejectionMessage, cancellationToken);
     }
 
     private async Task<CreateReportRequestResult> CreateCoreAsync(
         CreateReportRequestCommand command,
         AuthenticatedUserContext? user,
         SubmittedSemanticPlanningResult? semanticPlan,
+        RoutedPersistenceAction persistenceAction,
+        string? canonicalRequestJson,
+        string? rejectionCode,
+        string? rejectionMessage,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
         var reportRequest = ReportRequest.Create(
-            Guid.NewGuid().ToString("N"),
+            command.PreparedRequestId ?? Guid.NewGuid().ToString("N"),
             command.ConversationId,
             command.PreviousRequestId,
             command.Prompt,
             command.CorrelationId,
             user?.UserId,
             user?.TenantId,
+            command.PreparedCreatedAt,
             semanticPlanJson: semanticPlan is null
                 ? null
                 : SubmittedSemanticPlanSerializer.Serialize(semanticPlan));
@@ -155,13 +202,9 @@ public sealed class ReportRequestService : IReportRequestService
                 ApplicationAuditOutcome.Succeeded,
                 reportRequest.CreatedAt,
                 token);
-            await AppendProcessingOutboxAsync(
-                reportRequest.RequestId,
-                reportRequest.CorrelationId,
-                reportRequest.CreatedAt,
-                "initial",
-                semanticPlan,
-                token);
+            await ApplyInitialRoutingAsync(
+                reportRequest, persistenceAction, canonicalRequestJson,
+                rejectionCode, rejectionMessage, semanticPlan, token);
             return new CreateReportRequestResult(
                 reportRequest.RequestId,
                 reportRequest.Status);
@@ -171,7 +214,9 @@ public sealed class ReportRequestService : IReportRequestService
     public Task<ReviseReportRequestResult> ReviseAsync(
         ReviseReportRequestCommand command,
         CancellationToken cancellationToken) =>
-        ReviseCoreAsync(command, null, null, cancellationToken);
+        ReviseCoreAsync(command, null, null,
+            RoutedPersistenceAction.DispatchDeterministic,
+            null, null, null, cancellationToken);
 
     public Task<ReviseReportRequestResult> ReviseAsync(
         ReviseReportRequestCommand command,
@@ -179,7 +224,9 @@ public sealed class ReportRequestService : IReportRequestService
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(user);
-        return ReviseCoreAsync(command, user, null, cancellationToken);
+        return ReviseCoreAsync(command, user, null,
+            RoutedPersistenceAction.DispatchDeterministic,
+            null, null, null, cancellationToken);
     }
 
     public Task<ReviseReportRequestResult> RevisePlannedAsync(
@@ -191,18 +238,56 @@ public sealed class ReportRequestService : IReportRequestService
         ArgumentNullException.ThrowIfNull(user);
         ArgumentNullException.ThrowIfNull(semanticPlan);
         return ReviseCoreAsync(
-            command, user, semanticPlan, cancellationToken);
+            command, user, semanticPlan,
+            RoutedPersistenceAction.DispatchDeterministic,
+            null, null, null, cancellationToken);
+    }
+
+    public Task<ReviseReportRequestResult> RevisePlannedAwaitingAgenticAsync(
+        ReviseReportRequestCommand command,
+        AuthenticatedUserContext user,
+        SubmittedSemanticPlanningResult semanticPlan,
+        string canonicalRequestJson,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(user);
+        ArgumentNullException.ThrowIfNull(semanticPlan);
+        ArgumentException.ThrowIfNullOrWhiteSpace(canonicalRequestJson);
+        return ReviseCoreAsync(command, user, semanticPlan,
+            RoutedPersistenceAction.AwaitAgenticCandidate,
+            canonicalRequestJson, null, null, cancellationToken);
+    }
+
+    public Task<ReviseReportRequestResult> ReviseRejectedPlannedAsync(
+        ReviseReportRequestCommand command,
+        AuthenticatedUserContext user,
+        SubmittedSemanticPlanningResult semanticPlan,
+        string rejectionCode,
+        string rejectionMessage,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(user);
+        ArgumentNullException.ThrowIfNull(semanticPlan);
+        return ReviseCoreAsync(command, user, semanticPlan,
+            RoutedPersistenceAction.RejectUnsupported,
+            null, rejectionCode, rejectionMessage, cancellationToken);
     }
 
     private async Task<ReviseReportRequestResult> ReviseCoreAsync(
         ReviseReportRequestCommand command,
         AuthenticatedUserContext? user,
         SubmittedSemanticPlanningResult? semanticPlan,
+        RoutedPersistenceAction persistenceAction,
+        string? canonicalRequestJson,
+        string? rejectionCode,
+        string? rejectionMessage,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
-        var revisionRequestId = Guid.NewGuid().ToString("N");
-        var revisionCreatedAt = DateTimeOffset.UtcNow;
+        var revisionRequestId = command.PreparedRequestId
+            ?? Guid.NewGuid().ToString("N");
+        var revisionCreatedAt = command.PreparedCreatedAt
+            ?? DateTimeOffset.UtcNow;
         return await ExecuteAsync(async token =>
         {
             var source = await GetRequiredAsync(command.SourceRequestId, token);
@@ -251,13 +336,9 @@ public sealed class ReportRequestService : IReportRequestService
                 report.CreatedAt,
                 token,
                 source.RequestId);
-            await AppendProcessingOutboxAsync(
-                report.RequestId,
-                report.CorrelationId,
-                report.CreatedAt,
-                "initial",
-                semanticPlan,
-                token);
+            await ApplyInitialRoutingAsync(
+                report, persistenceAction, canonicalRequestJson,
+                rejectionCode, rejectionMessage, semanticPlan, token);
             return new ReviseReportRequestResult(
                 report.RequestId,
                 source.RequestId,
@@ -413,7 +494,9 @@ public sealed class ReportRequestService : IReportRequestService
         SubmitReportClarificationCommand command,
         CancellationToken cancellationToken) =>
         SubmitClarificationCoreAsync(
-            command, null, null, null, cancellationToken);
+            command, null, null, null,
+            RoutedPersistenceAction.DispatchDeterministic,
+            null, null, null, cancellationToken);
 
     public Task<UpdateReportRequestResult> SubmitClarificationAsync(
         SubmitReportClarificationCommand command,
@@ -422,7 +505,9 @@ public sealed class ReportRequestService : IReportRequestService
     {
         ArgumentNullException.ThrowIfNull(user);
         return SubmitClarificationCoreAsync(
-            command, user, null, null, cancellationToken);
+            command, user, null, null,
+            RoutedPersistenceAction.DispatchDeterministic,
+            null, null, null, cancellationToken);
     }
 
     public Task<UpdateReportRequestResult> SubmitClarificationAsync(
@@ -432,7 +517,9 @@ public sealed class ReportRequestService : IReportRequestService
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(correlationId);
         return SubmitClarificationCoreAsync(
-            command, null, correlationId.Trim(), null, cancellationToken);
+            command, null, correlationId.Trim(), null,
+            RoutedPersistenceAction.DispatchDeterministic,
+            null, null, null, cancellationToken);
     }
 
     public Task<UpdateReportRequestResult> SubmitClarificationAsync(
@@ -444,7 +531,9 @@ public sealed class ReportRequestService : IReportRequestService
         ArgumentNullException.ThrowIfNull(user);
         ArgumentException.ThrowIfNullOrWhiteSpace(correlationId);
         return SubmitClarificationCoreAsync(command, user,
-            correlationId.Trim(), null, cancellationToken);
+            correlationId.Trim(), null,
+            RoutedPersistenceAction.DispatchDeterministic,
+            null, null, null, cancellationToken);
     }
 
     public Task<UpdateReportRequestResult> SubmitPlannedClarificationAsync(
@@ -459,7 +548,45 @@ public sealed class ReportRequestService : IReportRequestService
         ArgumentException.ThrowIfNullOrWhiteSpace(correlationId);
         return SubmitClarificationCoreAsync(
             command, user, correlationId.Trim(), semanticPlan,
-            cancellationToken);
+            RoutedPersistenceAction.DispatchDeterministic,
+            null, null, null, cancellationToken);
+    }
+
+    public Task<UpdateReportRequestResult>
+        SubmitPlannedClarificationAwaitingAgenticAsync(
+            SubmitReportClarificationCommand command,
+            string correlationId,
+            AuthenticatedUserContext user,
+            SubmittedSemanticPlanningResult semanticPlan,
+            string canonicalRequestJson,
+            CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(user);
+        ArgumentNullException.ThrowIfNull(semanticPlan);
+        ArgumentException.ThrowIfNullOrWhiteSpace(correlationId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(canonicalRequestJson);
+        return SubmitClarificationCoreAsync(
+            command, user, correlationId.Trim(), semanticPlan,
+            RoutedPersistenceAction.AwaitAgenticCandidate,
+            canonicalRequestJson, null, null, cancellationToken);
+    }
+
+    public Task<UpdateReportRequestResult> RejectPlannedClarificationAsync(
+        SubmitReportClarificationCommand command,
+        string correlationId,
+        AuthenticatedUserContext user,
+        SubmittedSemanticPlanningResult semanticPlan,
+        string rejectionCode,
+        string rejectionMessage,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(user);
+        ArgumentNullException.ThrowIfNull(semanticPlan);
+        ArgumentException.ThrowIfNullOrWhiteSpace(correlationId);
+        return SubmitClarificationCoreAsync(
+            command, user, correlationId.Trim(), semanticPlan,
+            RoutedPersistenceAction.RejectUnsupported,
+            null, rejectionCode, rejectionMessage, cancellationToken);
     }
 
     private async Task<UpdateReportRequestResult> SubmitClarificationCoreAsync(
@@ -467,6 +594,10 @@ public sealed class ReportRequestService : IReportRequestService
         AuthenticatedUserContext? user,
         string? correlationId,
         SubmittedSemanticPlanningResult? semanticPlan,
+        RoutedPersistenceAction persistenceAction,
+        string? canonicalRequestJson,
+        string? rejectionCode,
+        string? rejectionMessage,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
@@ -486,16 +617,115 @@ public sealed class ReportRequestService : IReportRequestService
                 ApplicationAuditOutcome.Succeeded,
                 command.SubmittedAt,
                 token);
-            await AppendProcessingOutboxAsync(
-                report.RequestId,
-                correlationId ?? report.CorrelationId,
-                command.SubmittedAt,
-                "clarification",
-                semanticPlan,
-                token);
-            return result;
+            switch (persistenceAction)
+            {
+                case RoutedPersistenceAction.DispatchDeterministic:
+                    await AppendProcessingOutboxAsync(
+                        report.RequestId,
+                        correlationId ?? report.CorrelationId,
+                        command.SubmittedAt,
+                        "clarification",
+                        semanticPlan,
+                        token);
+                    return result;
+                case RoutedPersistenceAction.AwaitAgenticCandidate:
+                    await PrepareForAgenticCandidateAsync(
+                        report, canonicalRequestJson!, command.SubmittedAt,
+                        token);
+                    return CreateUpdateResult(report);
+                case RoutedPersistenceAction.RejectUnsupported:
+                    await RejectUnsupportedAsync(
+                        report, rejectionCode!, rejectionMessage!,
+                        command.SubmittedAt, token);
+                    return CreateUpdateResult(report);
+                default:
+                    throw new InvalidOperationException(
+                        "Unknown routed persistence action.");
+            }
         }, cancellationToken);
     }
+
+    private async Task ApplyInitialRoutingAsync(
+        ReportRequest report,
+        RoutedPersistenceAction persistenceAction,
+        string? canonicalRequestJson,
+        string? rejectionCode,
+        string? rejectionMessage,
+        SubmittedSemanticPlanningResult? semanticPlan,
+        CancellationToken cancellationToken)
+    {
+        switch (persistenceAction)
+        {
+            case RoutedPersistenceAction.DispatchDeterministic:
+                await AppendProcessingOutboxAsync(
+                    report.RequestId,
+                    report.CorrelationId,
+                    report.CreatedAt,
+                    "initial",
+                    semanticPlan,
+                    cancellationToken);
+                break;
+            case RoutedPersistenceAction.AwaitAgenticCandidate:
+                await PrepareForAgenticCandidateAsync(
+                    report, canonicalRequestJson!, report.CreatedAt,
+                    cancellationToken);
+                break;
+            case RoutedPersistenceAction.RejectUnsupported:
+                await RejectUnsupportedAsync(
+                    report, rejectionCode!, rejectionMessage!,
+                    report.CreatedAt, cancellationToken);
+                break;
+            default:
+                throw new InvalidOperationException(
+                    "Unknown routed persistence action.");
+        }
+    }
+
+    private async Task PrepareForAgenticCandidateAsync(
+        ReportRequest report,
+        string canonicalRequestJson,
+        DateTimeOffset routedAt,
+        CancellationToken cancellationToken)
+    {
+        report.RecordCanonicalRequest(canonicalRequestJson, routedAt);
+        report.TransitionTo(ReportRequestStatus.Validating, routedAt);
+        report.TransitionTo(ReportRequestStatus.Processing, routedAt);
+        await _repository.UpdateAsync(report, cancellationToken);
+        await AppendAuditAsync(
+            report,
+            ApplicationAuditEventType.CanonicalRequestRecorded,
+            ApplicationAuditOutcome.Succeeded,
+            routedAt,
+            cancellationToken);
+    }
+
+    private async Task RejectUnsupportedAsync(
+        ReportRequest report,
+        string rejectionCode,
+        string rejectionMessage,
+        DateTimeOffset routedAt,
+        CancellationToken cancellationToken)
+    {
+        report.TransitionTo(ReportRequestStatus.Validating, routedAt);
+        report.Reject(rejectionCode, rejectionMessage, routedAt);
+        await _repository.UpdateAsync(report, cancellationToken);
+        await AppendAuditAsync(
+            report,
+            ApplicationAuditEventType.ReportRejected,
+            ApplicationAuditOutcome.Rejected,
+            routedAt,
+            cancellationToken,
+            reasonCode: rejectionCode);
+        await AppendNotificationOutboxAsync(report, cancellationToken);
+    }
+
+    private static UpdateReportRequestResult CreateUpdateResult(
+        ReportRequest report) => new(
+        report.RequestId,
+        report.Status,
+        report.UpdatedAt,
+        report.RejectionCode,
+        report.RejectionMessage);
 
     private async Task<UpdateReportRequestResult> MutateAndAuditAsync(
         string requestId,
