@@ -527,3 +527,24 @@ END;
 COMMIT;
 GO
 
+BEGIN TRANSACTION;
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260809235416_AddSubmittedSemanticPlan'
+)
+BEGIN
+    ALTER TABLE [crm].[ReportRequests] ADD [SemanticPlanJson] nvarchar(max) NULL;
+END;
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260809235416_AddSubmittedSemanticPlan'
+)
+BEGIN
+    INSERT INTO [__EFMigrationsHistory] ([MigrationId], [ProductVersion])
+    VALUES (N'20260809235416_AddSubmittedSemanticPlan', N'10.0.10');
+END;
+
+COMMIT;
+GO
+

@@ -663,19 +663,21 @@ Validates the canonical application baseline:
 
 Handles the current Azure Container Apps deployment path:
 
-* container build,
-* Azure Container Registry,
-* migration artifacts,
-* Bicep infrastructure,
-* API deployment,
-* Teams deployment,
-* revision validation.
+* production Environment approval,
+* Microsoft Entra OIDC authentication,
+* immutable API and Teams image builds and ACR pushes,
+* Bicep validation, what-if, and deployment,
+* Container Apps revision, image, readiness, traffic, and smoke validation,
+* superseded API worker revision deactivation.
 
-### Legacy Web App workflow
+Database migrations are validated in CI and remain a separate DBA/operator
+release. The deployment workflow never applies them.
 
-A temporary legacy Azure Web App deployment path remains in the repository for compatibility during migration.
+### Legacy Web App boundary
 
-It is isolated from the canonical solution and runtime architecture and can be removed after production cutover is independently verified.
+The retained `crm-project/` and `crm-project.Tests/` compatibility projects are
+not included in either canonical workflow. No legacy Web App deployment workflow
+is created or invoked.
 
 ---
 

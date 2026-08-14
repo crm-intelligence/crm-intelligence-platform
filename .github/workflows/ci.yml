@@ -1,0 +1,235 @@
+name: CI — Build & Validate
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+  DOTNET_NOLOGO: true
+
+jobs:
+  build-test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Set up .NET from global.json
+        uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+
+      - name: Restore local tools
+        run: dotnet tool restore
+
+      - name: Restore solution
+        run: dotnet restore CrmAnalytics.slnx
+
+      - name: Build solution
+        run: dotnet build CrmAnalytics.slnx -c Release --no-restore
+
+      - name: Generate deterministic SQL integration fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          fixture_path="${RUNNER_TEMP}/crm_dev.db"
+          dotnet run \
+            --project tools/Crm.Analytics.Sql.DevData/Crm.Analytics.Sql.DevData.csproj \
+            --configuration Release \
+            --no-build \
+            -- "${fixture_path}"
+          echo "CRM_OLIST_SQLITE_DB=${fixture_path}" >> "${GITHUB_ENV}"
+          echo "CRM_REQUIRE_SQLITE_DB=1" >> "${GITHUB_ENV}"
+
+      - name: Run canonical test suite
+        run: >-
+          dotnet test CrmAnalytics.slnx -c Release --no-build
+          --logger trx --results-directory TestResults
+
+      - name: Validate reviewed migration artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          generated_script="${RUNNER_TEMP}/CrmAnalytics.Migrations.sql"
+          dotnet ef migrations script \
+            --idempotent \
+            --project src/CrmAnalytics.Infrastructure/CrmAnalytics.Infrastructure.csproj \
+            --startup-project src/CrmAnalytics.Api/CrmAnalytics.Api.csproj \
+            --context CrmAnalyticsDbContext \
+            --configuration Release \
+            --no-build \
+            --output "${generated_script}"
+
+          if ! cmp --silent deploy/sql/CrmAnalytics.Migrations.sql "${generated_script}"; then
+            echo "deploy/sql/CrmAnalytics.Migrations.sql is not synchronized with EF migrations." >&2
+            diff --unified deploy/sql/CrmAnalytics.Migrations.sql "${generated_script}"
+            exit 1
+          fi
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-${{ github.run_id }}-${{ github.run_attempt }}
+          path: TestResults/**/*.trx
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Write build and test summary
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "### Build & Test"
+            echo ""
+            echo "- Release build: passed"
+            echo "- Canonical tests: passed with the SQL fixture required"
+            echo "- SQL migration artifact drift: none"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+  infrastructure:
+    name: Infrastructure Validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Compile and lint Bicep
+        shell: bash
+        run: |
+          set -euo pipefail
+          az bicep version
+          az bicep build \
+            --file infra/azure/bicep/main.bicep \
+            --outfile "${RUNNER_TEMP}/main.json"
+          az bicep lint --file infra/azure/bicep/main.bicep
+
+      - name: Resolve Bicep parameter files
+        shell: bash
+        run: |
+          set -euo pipefail
+          example_params="infra/azure/bicep/main.ci.example.bicepparam"
+          pilot_example_params="infra/azure/bicep/main.ci.pilot.example.bicepparam"
+          trap 'rm -f "${example_params}" "${pilot_example_params}"' EXIT
+
+          cp infra/azure/bicep/main.bicepparam.example "${example_params}"
+          cp infra/azure/bicep/main.bicepparam.pilot.example "${pilot_example_params}"
+
+          az bicep build-params \
+            --file "${example_params}" \
+            --outfile "${RUNNER_TEMP}/main.example.parameters.json"
+          az bicep build-params \
+            --file "${pilot_example_params}" \
+            --outfile "${RUNNER_TEMP}/main.pilot.example.parameters.json"
+          az bicep build-params \
+            --file infra/azure/bicep/parameters/crm-project-rg-target.bicepparam \
+            --outfile "${RUNNER_TEMP}/crm-project-rg-target.parameters.json"
+
+      - name: Write infrastructure summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "### Infrastructure Validation"
+            echo ""
+            echo "- Bicep build and lint: passed"
+            echo "- Example and production parameter resolution: passed"
+            echo "- Azure resources mutated: no"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+  containers:
+    name: Container Validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Build API image
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build \
+            --file src/CrmAnalytics.Api/Dockerfile \
+            --tag crm-analytics-api:ci \
+            .
+          docker image inspect crm-analytics-api:ci > /dev/null
+
+      - name: Build Teams image
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build \
+            --file src/CrmAnalytics.Teams/Dockerfile \
+            --tag crm-analytics-teams:ci \
+            .
+          docker image inspect crm-analytics-teams:ci > /dev/null
+
+      - name: Write container summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "### Container Validation"
+            echo ""
+            echo "- API final image: built"
+            echo "- Teams final image: built"
+            echo "- Images pushed: no"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+  summary:
+    name: CI Summary
+    if: always()
+    needs:
+      - build-test
+      - infrastructure
+      - containers
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Write gate summary
+        shell: bash
+        env:
+          BUILD_TEST_RESULT: ${{ needs.build-test.result }}
+          INFRASTRUCTURE_RESULT: ${{ needs.infrastructure.result }}
+          CONTAINER_RESULT: ${{ needs.containers.result }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## CI Gate Summary"
+            echo ""
+            echo "| Gate | Result |"
+            echo "| --- | --- |"
+            echo "| Build | ${BUILD_TEST_RESULT} |"
+            echo "| Tests | ${BUILD_TEST_RESULT} |"
+            echo "| SQL / migration validation | ${BUILD_TEST_RESULT} |"
+            echo "| Bicep | ${INFRASTRUCTURE_RESULT} |"
+            echo "| Containers | ${CONTAINER_RESULT} |"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+          if [[ "${BUILD_TEST_RESULT}" != "success" \
+             || "${INFRASTRUCTURE_RESULT}" != "success" \
+             || "${CONTAINER_RESULT}" != "success" ]]; then
+            exit 1
+          fi

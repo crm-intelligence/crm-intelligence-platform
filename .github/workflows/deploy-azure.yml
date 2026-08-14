@@ -1,0 +1,475 @@
+name: CD — Azure Production
+
+on:
+  workflow_run:
+    workflows:
+      - CI — Build & Validate
+    branches:
+      - main
+    types:
+      - completed
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: production
+  cancel-in-progress: false
+
+env:
+  API_IMAGE_REPOSITORY: crm-analytics-api
+  TEAMS_IMAGE_REPOSITORY: crm-analytics-teams
+  BICEP_PARAMETER_FILE: infra/azure/bicep/parameters/crm-project-rg-target.bicepparam
+
+jobs:
+  deploy:
+    name: Deploy Production
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: production
+
+    steps:
+      - name: Resolve exact source commit
+        id: source
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          WORKFLOW_RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          DISPATCH_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "${EVENT_NAME}" == "workflow_run" ]]; then
+            deploy_sha="${WORKFLOW_RUN_SHA}"
+          else
+            deploy_sha="${DISPATCH_SHA}"
+          fi
+
+          if [[ ! "${deploy_sha}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "The deployment commit is not a full Git SHA." >&2
+            exit 1
+          fi
+
+          short_sha="${deploy_sha:0:12}"
+          image_tag="${short_sha}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          echo "sha=${deploy_sha}" >> "${GITHUB_OUTPUT}"
+          echo "short_sha=${short_sha}" >> "${GITHUB_OUTPUT}"
+          echo "image_tag=${image_tag}" >> "${GITHUB_OUTPUT}"
+
+      - name: Check out exact source commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.source.outputs.sha }}
+          persist-credentials: false
+
+      - name: Validate required GitHub Environment variables
+        shell: bash
+        env:
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          ACR_NAME: ${{ vars.ACR_NAME }}
+        run: |
+          set -euo pipefail
+          for value in \
+            AZURE_CLIENT_ID \
+            AZURE_TENANT_ID \
+            AZURE_SUBSCRIPTION_ID \
+            AZURE_RESOURCE_GROUP \
+            ACR_NAME; do
+            if [[ -z "${!value}" ]]; then
+              echo "Required GitHub Environment variable ${value} is not configured." >&2
+              exit 1
+            fi
+          done
+
+      - name: Sign in to Azure with OIDC
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Validate Azure deployment target
+        id: target
+        shell: bash
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          ACR_NAME: ${{ vars.ACR_NAME }}
+        run: |
+          set -euo pipefail
+          signed_in_subscription="$(az account show --query id --output tsv)"
+          if [[ "${signed_in_subscription}" != "${AZURE_SUBSCRIPTION_ID}" ]]; then
+            echo "Azure login selected an unexpected subscription." >&2
+            exit 1
+          fi
+
+          if [[ "$(az group exists --name "${AZURE_RESOURCE_GROUP}")" != "true" ]]; then
+            echo "The configured Azure resource group does not exist." >&2
+            exit 1
+          fi
+
+          acr_login_server="$(az acr show \
+            --name "${ACR_NAME}" \
+            --resource-group "${AZURE_RESOURCE_GROUP}" \
+            --query loginServer \
+            --output tsv)"
+          if [[ -z "${acr_login_server}" ]]; then
+            echo "The configured ACR login server could not be resolved." >&2
+            exit 1
+          fi
+
+          echo "acr_login_server=${acr_login_server}" >> "${GITHUB_OUTPUT}"
+
+      - name: Authenticate Docker to ACR with Azure identity
+        env:
+          ACR_NAME: ${{ vars.ACR_NAME }}
+        run: az acr login --name "${ACR_NAME}"
+
+      - name: Build and push immutable images
+        id: images
+        shell: bash
+        env:
+          ACR_NAME: ${{ vars.ACR_NAME }}
+          ACR_LOGIN_SERVER: ${{ steps.target.outputs.acr_login_server }}
+          IMAGE_TAG: ${{ steps.source.outputs.image_tag }}
+        run: |
+          set -euo pipefail
+          api_tag="${ACR_LOGIN_SERVER}/${API_IMAGE_REPOSITORY}:${IMAGE_TAG}"
+          teams_tag="${ACR_LOGIN_SERVER}/${TEAMS_IMAGE_REPOSITORY}:${IMAGE_TAG}"
+
+          docker build \
+            --platform linux/amd64 \
+            --file src/CrmAnalytics.Api/Dockerfile \
+            --tag "${api_tag}" \
+            .
+          docker build \
+            --platform linux/amd64 \
+            --file src/CrmAnalytics.Teams/Dockerfile \
+            --tag "${teams_tag}" \
+            .
+
+          docker push "${api_tag}"
+          docker push "${teams_tag}"
+
+          api_digest="$(az acr repository show \
+            --name "${ACR_NAME}" \
+            --image "${API_IMAGE_REPOSITORY}:${IMAGE_TAG}" \
+            --query digest \
+            --output tsv)"
+          teams_digest="$(az acr repository show \
+            --name "${ACR_NAME}" \
+            --image "${TEAMS_IMAGE_REPOSITORY}:${IMAGE_TAG}" \
+            --query digest \
+            --output tsv)"
+
+          if [[ ! "${api_digest}" =~ ^sha256:[0-9a-f]{64}$ \
+             || ! "${teams_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "ACR did not return valid immutable image digests." >&2
+            exit 1
+          fi
+
+          api_image="${ACR_LOGIN_SERVER}/${API_IMAGE_REPOSITORY}@${api_digest}"
+          teams_image="${ACR_LOGIN_SERVER}/${TEAMS_IMAGE_REPOSITORY}@${teams_digest}"
+          echo "api_image=${api_image}" >> "${GITHUB_OUTPUT}"
+          echo "teams_image=${teams_image}" >> "${GITHUB_OUTPUT}"
+
+      - name: Validate Bicep deployment
+        shell: bash
+        env:
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          API_IMAGE: ${{ steps.images.outputs.api_image }}
+          TEAMS_IMAGE: ${{ steps.images.outputs.teams_image }}
+        run: |
+          set -euo pipefail
+          az bicep build \
+            --file infra/azure/bicep/main.bicep \
+            --outfile "${RUNNER_TEMP}/main.json"
+          az bicep lint --file infra/azure/bicep/main.bicep
+          az bicep build-params \
+            --file "${BICEP_PARAMETER_FILE}" \
+            --outfile "${RUNNER_TEMP}/production.parameters.json"
+
+          az deployment group validate \
+            --resource-group "${AZURE_RESOURCE_GROUP}" \
+            --template-file infra/azure/bicep/main.bicep \
+            --parameters "${RUNNER_TEMP}/production.parameters.json" \
+              apiImage="${API_IMAGE}" \
+              teamsImage="${TEAMS_IMAGE}" \
+            --only-show-errors \
+            --output none
+
+      - name: Preview Bicep changes
+        shell: bash
+        env:
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          API_IMAGE: ${{ steps.images.outputs.api_image }}
+          TEAMS_IMAGE: ${{ steps.images.outputs.teams_image }}
+        run: |
+          set -euo pipefail
+          az deployment group what-if \
+            --resource-group "${AZURE_RESOURCE_GROUP}" \
+            --template-file infra/azure/bicep/main.bicep \
+            --parameters "${RUNNER_TEMP}/production.parameters.json" \
+              apiImage="${API_IMAGE}" \
+              teamsImage="${TEAMS_IMAGE}" \
+            --result-format ResourceIdOnly \
+            --only-show-errors
+
+      - name: Deploy Bicep with immutable image digests
+        id: bicep
+        shell: bash
+        env:
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          API_IMAGE: ${{ steps.images.outputs.api_image }}
+          TEAMS_IMAGE: ${{ steps.images.outputs.teams_image }}
+          SHORT_SHA: ${{ steps.source.outputs.short_sha }}
+        run: |
+          set -euo pipefail
+          deployment_name="crm-analytics-${SHORT_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          outputs_file="${RUNNER_TEMP}/deployment-outputs.json"
+
+          az deployment group create \
+            --name "${deployment_name}" \
+            --resource-group "${AZURE_RESOURCE_GROUP}" \
+            --template-file infra/azure/bicep/main.bicep \
+            --parameters "${RUNNER_TEMP}/production.parameters.json" \
+              apiImage="${API_IMAGE}" \
+              teamsImage="${TEAMS_IMAGE}" \
+            --only-show-errors \
+            --query properties.outputs \
+            --output json > "${outputs_file}"
+
+          api_app="$(jq -r '.apiContainerAppName.value' "${outputs_file}")"
+          teams_app="$(jq -r '.teamsContainerAppName.value' "${outputs_file}")"
+          api_revision="$(jq -r '.apiLatestRevisionName.value' "${outputs_file}")"
+          teams_revision="$(jq -r '.teamsLatestRevisionName.value' "${outputs_file}")"
+          api_fqdn="$(jq -r '.apiFqdn.value' "${outputs_file}")"
+          teams_fqdn="$(jq -r '.teamsFqdn.value' "${outputs_file}")"
+
+          for value in api_app teams_app api_revision teams_revision api_fqdn teams_fqdn; do
+            if [[ -z "${!value}" || "${!value}" == "null" ]]; then
+              echo "Bicep did not return required output ${value}." >&2
+              exit 1
+            fi
+          done
+
+          echo "deployment_name=${deployment_name}" >> "${GITHUB_OUTPUT}"
+          echo "api_app=${api_app}" >> "${GITHUB_OUTPUT}"
+          echo "teams_app=${teams_app}" >> "${GITHUB_OUTPUT}"
+          echo "api_revision=${api_revision}" >> "${GITHUB_OUTPUT}"
+          echo "teams_revision=${teams_revision}" >> "${GITHUB_OUTPUT}"
+          echo "api_fqdn=${api_fqdn}" >> "${GITHUB_OUTPUT}"
+          echo "teams_fqdn=${teams_fqdn}" >> "${GITHUB_OUTPUT}"
+
+      - name: Verify new revisions and immutable images
+        shell: bash
+        env:
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          API_APP: ${{ steps.bicep.outputs.api_app }}
+          TEAMS_APP: ${{ steps.bicep.outputs.teams_app }}
+          API_REVISION: ${{ steps.bicep.outputs.api_revision }}
+          TEAMS_REVISION: ${{ steps.bicep.outputs.teams_revision }}
+          API_IMAGE: ${{ steps.images.outputs.api_image }}
+          TEAMS_IMAGE: ${{ steps.images.outputs.teams_image }}
+        run: |
+          set -euo pipefail
+
+          verify_revision() {
+            local app_name="$1"
+            local revision_name="$2"
+            local expected_image="$3"
+            local revision_json health_state active_state deployed_image
+
+            for attempt in $(seq 1 30); do
+              revision_json="$(az containerapp revision show \
+                --name "${app_name}" \
+                --resource-group "${AZURE_RESOURCE_GROUP}" \
+                --revision "${revision_name}" \
+                --output json)"
+              health_state="$(jq -r '.properties.healthState // .healthState // ""' <<< "${revision_json}")"
+              active_state="$(jq -r '.properties.active // .active // false' <<< "${revision_json}")"
+              deployed_image="$(jq -r '.properties.template.containers[0].image // .template.containers[0].image // ""' <<< "${revision_json}")"
+
+              if [[ "${deployed_image}" != "${expected_image}" ]]; then
+                echo "Revision ${revision_name} is not running the expected image digest." >&2
+                exit 1
+              fi
+
+              if [[ "${health_state}" == "Healthy" && "${active_state}" == "true" ]]; then
+                return 0
+              fi
+
+              if [[ "${attempt}" -lt 30 ]]; then
+                sleep 10
+              fi
+            done
+
+            echo "Revision ${revision_name} did not become active and healthy." >&2
+            exit 1
+          }
+
+          for app_name in "${API_APP}" "${TEAMS_APP}"; do
+            app_json="$(az containerapp show \
+              --name "${app_name}" \
+              --resource-group "${AZURE_RESOURCE_GROUP}" \
+              --output json)"
+            revision_mode="$(jq -r '.properties.configuration.activeRevisionsMode // .configuration.activeRevisionsMode // ""' <<< "${app_json}")"
+            if [[ "${revision_mode}" != "Multiple" ]]; then
+              echo "Container App ${app_name} is not using the repository-required Multiple revision mode." >&2
+              exit 1
+            fi
+          done
+
+          verify_revision "${API_APP}" "${API_REVISION}" "${API_IMAGE}"
+          verify_revision "${TEAMS_APP}" "${TEAMS_REVISION}" "${TEAMS_IMAGE}"
+
+      - name: Shift production traffic to healthy revisions
+        shell: bash
+        env:
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          API_APP: ${{ steps.bicep.outputs.api_app }}
+          TEAMS_APP: ${{ steps.bicep.outputs.teams_app }}
+          API_REVISION: ${{ steps.bicep.outputs.api_revision }}
+          TEAMS_REVISION: ${{ steps.bicep.outputs.teams_revision }}
+        run: |
+          set -euo pipefail
+          az containerapp ingress traffic set \
+            --name "${API_APP}" \
+            --resource-group "${AZURE_RESOURCE_GROUP}" \
+            --revision-weight "${API_REVISION}=100" \
+            --output none
+          az containerapp ingress traffic set \
+            --name "${TEAMS_APP}" \
+            --resource-group "${AZURE_RESOURCE_GROUP}" \
+            --revision-weight "${TEAMS_REVISION}=100" \
+            --output none
+
+          verify_traffic() {
+            local app_name="$1"
+            local revision_name="$2"
+            local app_json traffic_json selected_weight other_weight
+            app_json="$(az containerapp show \
+              --name "${app_name}" \
+              --resource-group "${AZURE_RESOURCE_GROUP}" \
+              --output json)"
+            traffic_json="$(jq -c '.properties.configuration.ingress.traffic // .configuration.ingress.traffic // []' <<< "${app_json}")"
+            selected_weight="$(jq -r \
+              --arg revision "${revision_name}" \
+              '[.[] | select(.revisionName == $revision) | (.weight // 0)] | add // 0' \
+              <<< "${traffic_json}")"
+            other_weight="$(jq -r \
+              --arg revision "${revision_name}" \
+              '[.[] | select(.revisionName != $revision) | (.weight // 0)] | add // 0' \
+              <<< "${traffic_json}")"
+            if [[ "${selected_weight}" != "100" || "${other_weight}" != "0" ]]; then
+              echo "Container App ${app_name} did not converge to 100% traffic on ${revision_name}." >&2
+              exit 1
+            fi
+          }
+
+          verify_traffic "${API_APP}" "${API_REVISION}"
+          verify_traffic "${TEAMS_APP}" "${TEAMS_REVISION}"
+
+      - name: Run topology-aware smoke checks
+        shell: bash
+        env:
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          API_APP: ${{ steps.bicep.outputs.api_app }}
+          API_FQDN: ${{ steps.bicep.outputs.api_fqdn }}
+          TEAMS_FQDN: ${{ steps.bicep.outputs.teams_fqdn }}
+        run: |
+          set -euo pipefail
+          api_app_json="$(az containerapp show \
+            --name "${API_APP}" \
+            --resource-group "${AZURE_RESOURCE_GROUP}" \
+            --output json)"
+          api_external="$(jq -r '.properties.configuration.ingress.external // .configuration.ingress.external // false' <<< "${api_app_json}")"
+
+          if [[ "${api_external,,}" == "true" ]]; then
+            pwsh -NoProfile -File scripts/smoke/test-api-health.ps1 \
+              -BaseUrl "https://${API_FQDN}"
+          else
+            echo "API public smoke skipped because ingress is internal; readiness was verified through the revision health state."
+          fi
+
+          pwsh -NoProfile -File scripts/smoke/test-teams-callback.ps1 \
+            -BaseUrl "https://${TEAMS_FQDN}"
+
+      - name: Deactivate superseded API worker revisions
+        shell: bash
+        env:
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          API_APP: ${{ steps.bicep.outputs.api_app }}
+          API_REVISION: ${{ steps.bicep.outputs.api_revision }}
+        run: |
+          set -euo pipefail
+          revisions_json="$(az containerapp revision list \
+            --name "${API_APP}" \
+            --resource-group "${AZURE_RESOURCE_GROUP}" \
+            --output json)"
+          active_revisions="$(jq -r '.[] | select((.properties.active // .active // false) == true) | .name' <<< "${revisions_json}")"
+
+          while IFS= read -r revision_name; do
+            if [[ -n "${revision_name}" && "${revision_name}" != "${API_REVISION}" ]]; then
+              az containerapp revision deactivate \
+                --resource-group "${AZURE_RESOURCE_GROUP}" \
+                --revision "${revision_name}" \
+                --output none
+            fi
+          done <<< "${active_revisions}"
+
+          revisions_json="$(az containerapp revision list \
+            --name "${API_APP}" \
+            --resource-group "${AZURE_RESOURCE_GROUP}" \
+            --output json)"
+          remaining_superseded="$(jq -r \
+            --arg current "${API_REVISION}" \
+            '.[] | select((.properties.active // .active // false) == true and .name != $current) | .name' \
+            <<< "${revisions_json}")"
+          if [[ -n "${remaining_superseded}" ]]; then
+            echo "One or more superseded API worker revisions remain active." >&2
+            exit 1
+          fi
+
+      - name: Write deployment summary
+        if: always()
+        shell: bash
+        env:
+          DEPLOYMENT_RESULT: ${{ job.status }}
+          DEPLOY_SHA: ${{ steps.source.outputs.sha }}
+          API_IMAGE: ${{ steps.images.outputs.api_image }}
+          TEAMS_IMAGE: ${{ steps.images.outputs.teams_image }}
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          API_APP: ${{ steps.bicep.outputs.api_app }}
+          TEAMS_APP: ${{ steps.bicep.outputs.teams_app }}
+          API_REVISION: ${{ steps.bicep.outputs.api_revision }}
+          TEAMS_REVISION: ${{ steps.bicep.outputs.teams_revision }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## Azure Production Deployment"
+            echo ""
+            echo "| Item | Value |"
+            echo "| --- | --- |"
+            echo "| Commit SHA | ${DEPLOY_SHA:-not resolved} |"
+            echo "| API image | ${API_IMAGE:-not built} |"
+            echo "| Teams image | ${TEAMS_IMAGE:-not built} |"
+            echo "| Resource group | ${AZURE_RESOURCE_GROUP:-not configured} |"
+            echo "| API Container App | ${API_APP:-not deployed} |"
+            echo "| Teams Container App | ${TEAMS_APP:-not deployed} |"
+            echo "| API revision | ${API_REVISION:-not verified} |"
+            echo "| Teams revision | ${TEAMS_REVISION:-not verified} |"
+            echo "| Deployment / health result | ${DEPLOYMENT_RESULT} |"
+            echo ""
+            echo "Production database migrations executed: **NO**"
+          } >> "${GITHUB_STEP_SUMMARY}"

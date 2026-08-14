@@ -490,9 +490,11 @@ giriş yapan `ramazanb` kullanıcısı (object ID
 | Maximum size | `268435456000` bytes (250 GiB) | `Existing` |
 
 `ConnectionStrings:CrmAnalytics` bu application database'e ayrılmıştır. DBA
-kontrollü `deploy/sql/CrmAnalytics.Migrations.sql` artifact'ındaki altı EF
-migration uygulandı ve history kayıtları doğrulandı. `crm` şemasında on uygulama
-tablosu oluştu; seed/test/müşteri verisi eklenmedi.
+kontrollü artifact'ın ilk altı EF migration'ı uygulandı ve history kayıtları
+doğrulandı. Mevcut `deploy/sql/CrmAnalytics.Migrations.sql` ayrıca uygulama kanıtı
+olmayan ve ayrı DBA/operator onayı gerektiren
+`20260809235416_AddSubmittedSemanticPlan` migration'ını içerir. `crm` şemasında on
+uygulama tablosu oluştu; seed/test/müşteri verisi eklenmedi.
 
 Runtime UAMI `id-crm-analytics-runtime`, object ID
 `ab5c6bec-a1b1-43fc-af9f-3aebe38a6182` ile `EXTERNAL_USER` contained database
@@ -771,8 +773,8 @@ Bot Client ID, mevcut API Client ID
 | `.github/workflows/devops_lokman-crm-project.yml` | `lokman-crm-project` için legacy Web App build/deploy akışı | `ReusableForLegacyOnly` |
 | `.github/workflows/ci.yml` | CI/test; hedef Azure kaynaklarını oluşturmaz | `NotApplicable` |
 | `docs/archive/early-project/TEST_PLAN_v1.md`, `TEST_DATA_STRATEGY.md` | Tarihsel test dokümanları; Azure provisioning sözleşmesi değil | `NotApplicable` |
-| `.github/workflows/deploy-azure.yml` | OIDC login, ACR build/push, Bicep validate/what-if/create, Container App health ve migration artefact üretimi içerir; gerekli external variables/resources mevcut değil | `Missing` prerequisites |
-| `.github/workflows/ci.yml` | Build/test/image build ve migration script artefact'ı; Azure deployment yapmaz | `NotApplicable` |
+| `.github/workflows/deploy-azure.yml` | Production Environment onayı, OIDC login, ACR build/push, Bicep validate/what-if/create ve Container App revision/health/smoke doğrulaması içerir; database migration çalıştırmaz | GitHub Environment variables/OIDC federation yapılandırılmalı |
+| `.github/workflows/ci.yml` | Canonical build/test, zorunlu fixture, migration artifact drift, Bicep/parameter ve API/Teams image build doğrulaması; Azure deployment yapmaz | `Canonical` |
 
 Önceki Key Vault identity `ConfigurationMismatch` kaydı çözülmüştür:
 `KEY_VAULT_CONFIGURATION.md` ve Bicep, Key Vault secret reference için API ve
@@ -806,8 +808,9 @@ rolüne sahip olması gerçek durum olarak ayrıca raporlanmıştır.
 - `crmprojectsb634c` ve `crm-report-processing`: Standard Service Bus namespace
   ve repository sözleşmesiyle uyumlu queue olarak `ReusableAsIs`.
 - `crmprojectsql634c` ve `CrmAnalytics`: Entra-only logical server ve Standard
-  S0/10 DTU application database olarak `ReusableAsIs`; migration, runtime UAMI
-  minimum CRUD izinleri ve application DB Key Vault secret hazırlığı tamamlandı.
+  S0/10 DTU application database olarak `ReusableAsIs`; ilk altı migration,
+  runtime UAMI minimum CRUD izinleri ve application DB Key Vault secret hazırlığı
+  tamamlandı. Yedinci tracked migration ayrı DBA onayı bekler.
 - `oidc-msi-9bde`: legacy Web App deployment amacı kanıtlıdır; runtime UAMI
   olarak yeniden kullanım için `InsufficientEvidence` ve açık sahiplik/güvenlik
   onayı vardır.
@@ -869,9 +872,9 @@ aşağıdaki kaynak ve yapılandırma blocker'ları devam etmektedir.
 8. Existing Log Analytics Bicep'e bağlandı; API/Teams application telemetry'si
    için SDK olmadığı ve `ApplicationInsightsConnectionString` eşlenmediği açık
    bir gözlemlenebilirlik kararıdır.
-9. DBA kontrollü migration uygulandı ve image availability digest ile
-   doğrulandı; gerçek deployment, smoke/UAT kanıtı yoktur ve bu adımda bunlar
-   çalıştırılmadı.
+9. DBA kontrollü ilk altı migration uygulandı ve image availability digest ile
+   doğrulandı; yedinci tracked migration için uygulama kanıtı yoktur. Gerçek
+   deployment, smoke/UAT kanıtı yoktur ve bu adımda bunlar çalıştırılmadı.
 
 ## Bir sonraki güvenli işlem sırası
 

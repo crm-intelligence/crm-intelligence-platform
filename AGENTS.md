@@ -81,7 +81,7 @@ Deployment and operations:
 - `scripts/smoke/` — post-deployment smoke checks.
 - `docs/deployment/` and `docs/operations/` — current runbooks and resource state.
 
-There are currently no tracked `.github/workflows/` files. Do not assume the CI/deployment workflows described in older documentation exist, and do not invent or edit a workflow unless the task explicitly targets CI/CD.
+The canonical GitHub Actions boundary is `.github/workflows/ci.yml` for validation and `.github/workflows/deploy-azure.yml` for the Azure Container Apps production path. Neither workflow includes the legacy Web App projects. Edit these workflows only when the task explicitly targets CI/CD.
 
 `crm-project/` and `crm-project.Tests/` are retained legacy Azure Web App compatibility projects. They are outside `CrmAnalytics.slnx` and are not canonical runtime source. Do not modify or remove them unless the task explicitly targets the legacy cutover.
 
