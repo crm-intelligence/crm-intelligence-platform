@@ -146,7 +146,7 @@ Bot ve messaging endpoint oluşturulmadı.
 | Teams image | `crm-analytics-teams:45cbd936556b-teams-bot-manual-20260804215550` | OCI index `sha256:91bd6b83283f0c66686e0219256e3a4a881b0ff74cdab86002529e9c4036650f`; `linux/amd64` manifest `sha256:239e4caf3fc8b1460661439de55879c1a355c4615c19bd5120f5d04e6a411eee`; `linux/amd64`; compressed layer+config `100182518` byte; SingleTenant bot configuration içerir; tag write-disabled |
 | Azure SQL logical server | `crmprojectsql634c` / `crmprojectsql634c.database.windows.net` | `Ready`; Sweden Central, Entra-only, public network enabled, TLS 1.2, firewall rule yok |
 | Azure SQL application DB | `CrmAnalytics` | `Online`; Standard S0, 10 DTU |
-| Azure SQL migration | `deploy/sql/CrmAnalytics.Migrations.sql` | `Applied`; altı EF migration/history ve on application tablosu doğrulandı; son migration `20260805100943_AddApplicationAuditMetadata` |
+| Azure SQL migration | `deploy/sql/CrmAnalytics.Migrations.sql` | Azure kanıtında ilk altı migration `20260805100943_AddApplicationAuditMetadata` dahil uygulanmış durumda; tracked artifact ayrıca DBA/operator onayı bekleyen `20260809235416_AddSubmittedSemanticPlan` migration'ını içerir |
 | Azure SQL runtime user | `id-crm-analytics-runtime` | `Existing`; `EXTERNAL_USER`, yalnız `crm` schema CRUD, yönetici rolü yok |
 | Application DB secret | `crm-analytics-application-db` | `Existing`; enabled, değer/version belgelenmedi |
 | Service Bus namespace | `crmprojectsb634c` / `crmprojectsb634c.servicebus.windows.net` | `Succeeded`; Standard, Sweden Central, public network enabled, TLS 1.2, local authentication enabled |
@@ -361,8 +361,10 @@ Entra-only authentication, Entra administrator `ramazanb` (object ID
 `crmprojectsql634c.database.windows.net` değeridir.
 
 `CrmAnalytics` database'i `Online`, Standard S0 / 10 DTU olarak oluşturuldu.
-`deploy/sql/CrmAnalytics.Migrations.sql` içindeki altı EF migration
-uygulandı. Runtime UAMI explicit object ID ile `EXTERNAL_USER` contained user
+`deploy/sql/CrmAnalytics.Migrations.sql` artifact'ının ilk altı EF migration'ı
+uygulandı. Mevcut tracked artifact'taki yedinci
+`20260809235416_AddSubmittedSemanticPlan` için uygulama kanıtı yoktur ve ayrı DBA
+onayı gerekir. Runtime UAMI explicit object ID ile `EXTERNAL_USER` contained user
 olarak oluşturuldu ve yalnız `crm` şemasında `SELECT`, `INSERT`, `UPDATE`, `DELETE`
 aldı; `EXECUTE`, DDL veya yönetici rolleri verilmedi. `ConnectionStrings:CrmAnalytics`
 için `crm-analytics-application-db` Key Vault secret'ı mevcut ve enabled durumdadır;
@@ -491,10 +493,12 @@ resource IDs, revision adları ve non-secret FQDN'ler.
 
 ### 11. SQL migration
 
-Tamamlandı: deployment'tan ayrı DBA kontrollü idempotent
-`deploy/sql/CrmAnalytics.Migrations.sql` artifact'ı application DB'ye
-uygulandı; altı EF migration history kaydı ve beklenen tablolar doğrulandı.
-Uygulama startup'ı migration çalıştırmaz.
+Deployment'tan ayrı DBA kontrollü idempotent artifact'ın ilk altı migration'ı
+application DB'ye uygulandı ve history kayıtları doğrulandı. Tracked
+`deploy/sql/CrmAnalytics.Migrations.sql` artık yedinci
+`20260809235416_AddSubmittedSemanticPlan` migration'ını da içerir; bu migration
+Container App deployment'ından önce ayrıca onaylanıp uygulanmalıdır. Uygulama
+startup'ı migration çalıştırmaz.
 
 ### 12. Health ve smoke testleri
 
@@ -591,7 +595,8 @@ değerler kalır. Log Analytics shared key yalnız runtime `listKeys` ifadesiyle
 4. Runtime UAMI için ACR-scope `AcrPull`, Service Bus queue-scope Data
    Sender/Receiver ve Azure SQL schema-scope minimum CRUD izinleri tamamlandı.
 5. Azure SQL logical server ve Standard S0 application database hazırdır;
-   `crm-analytics-application-db` Key Vault secret'ı ve migration tamamlandı.
+   `crm-analytics-application-db` Key Vault secret'ı ve ilk altı migration
+   tamamlandı; `20260809235416_AddSubmittedSemanticPlan` ayrı DBA onayı bekler.
 6. Service Bus namespace/queue ve queue-scope runtime data rolleri tamamlanmıştır;
    managed identity smoke sonrasında local authentication'ı kapatma işi açıktır.
 7. DWH, internal API key ve Teams client secret hazırdır. Teams/Bot App
@@ -611,7 +616,8 @@ değerler kalır. Log Analytics shared key yalnız runtime `listKeys` ifadesiyle
     gerçektir. Yalnız Teams Container App URL/messaging endpoint alanı ve
     kullanılmayan FabricJob kimlikleri placeholder'dır. QueryDwh ve QueryOltp enabled'dır.
 12. Azure validate/what-if, deployment ve smoke testleri ayrı onay beklemektedir;
-    DBA kontrollü application DB migration'ı tamamlanmıştır.
+    ilk altı application DB migration'ı tamamlanmıştır; tracked artifact'taki
+    `20260809235416_AddSubmittedSemanticPlan` için ayrı DBA onayı gerekir.
 
 ## Audit metadata release sonucu — 2026-08-05
 

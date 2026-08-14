@@ -229,9 +229,9 @@ görmesi için revision restart gerekir.
 
 ## CI ve güvenlik notları
 
-Mevcut GitHub Actions dosyalarında Container Apps/Bicep deployment job'u yoktur.
-Eski Web App workflow'u Azure login için OIDC client/tenant/subscription ID
-repository secret'larını kullanır, fakat uygulama secret değeri taşımaz. İleride
-pilot deployment workflow'u eklenirse yalnız normal Bicep parametreleri ve Key
-Vault/secret adlarını geçmeli; connection string, API key veya client secret'ı
-workflow input'u ya da GitHub secret'ından Container App'e kopyalamamalıdır.
+`.github/workflows/deploy-azure.yml`, `production` GitHub Environment'ındaki
+non-secret client/tenant/subscription kimlikleriyle Microsoft Entra OIDC kullanır;
+client secret kullanmaz. Workflow yalnız tracked Bicep parametrelerini, immutable
+image digest'lerini ve Key Vault secret adlarını geçirir. Connection string, API
+key veya client secret GitHub Actions input'u ya da secret'ı olarak Container
+App'e kopyalanmaz. Uygulama secret değerleri Key Vault'ta kalır.
