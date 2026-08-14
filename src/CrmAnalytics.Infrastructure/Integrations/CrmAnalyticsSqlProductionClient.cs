@@ -948,7 +948,7 @@ public sealed class CrmAnalyticsSqlProductionClient(
             finalValidationDecision);
     }
 
-    private static SqlProductionClientResult MapResponse(
+    internal static SqlProductionClientResult MapResponse(
         SqlProductionResponse response)
     {
         ArgumentNullException.ThrowIfNull(response);

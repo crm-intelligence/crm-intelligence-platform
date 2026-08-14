@@ -20,7 +20,16 @@
       ],
       "scopeColumn": "region",
       "joinPaths": [
-        { "to": "vw_customer", "on": "vw_sales.customer_id = vw_customer.customer_id" }
+        {
+          "id": "sales.customer",
+          "to": "vw_customer",
+          "leftColumn": "customer_id",
+          "rightColumn": "customer_id",
+          "cardinality": "manyToOne",
+          "leftRuntime": "dwh",
+          "rightRuntime": "dwh",
+          "allowedJoinTypes": ["inner"]
+        }
       ]
     },
 

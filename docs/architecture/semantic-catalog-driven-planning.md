@@ -57,7 +57,40 @@ runtime flows. The active LLM-first flow is:
 rollback mode. `LlmFirst` does not call that pipeline as its primary planner; embeddings may
 later be used only to reduce catalog context.
 
-The model never selects a table, view, column, join, authorization scope, timeout or execution policy. It never produces SQL. `DeterministicQueryBuilder` is the only SQL generation point and remains the security boundary before the guardrail pipeline.
+In the submitted V1 and Ollama fallback flows, the semantic-planning model never selects a
+table, view, column, join, authorization scope, timeout or execution policy and never
+produces SQL. `DeterministicQueryBuilder` remains their SQL generation point. The separate
+external SQL-agent candidate boundary below does not change those flows and never treats
+model-authored SQL as trusted or executable.
+
+## Copilot Studio SQL reasoning integration boundary
+
+The production planning behavior above remains unchanged. A separate, authenticated
+`/api/sql-agent` boundary prepares a future specialized Copilot Studio SQL Reasoning child
+agent without configuring or invoking Copilot Studio in the backend. The public V1
+`/api/report-requests/planned` contract is unchanged.
+
+The boundary accepts a versioned `CopilotSqlAgentIntent` containing business analytical
+intent only. It carries no table, column, JOIN, authorization, data-scope, credential or
+execution-policy fields. Every call is ownership-filtered against the current report request
+and its stored Canonical V1 base. Advanced V2 comparison, calculation and ordering features
+may extend that base, but cannot change its metric, dimension, filter or time meaning.
+
+The backend-owned `QueryCapabilityAnalyzer` returns `deterministic`, `agentic_required` or
+`unsupported`. Semantic tools project only the context reachable from the bound intent;
+there are no catalog, schema-discovery, sample-data or database-execution endpoints.
+
+An agentic candidate submission must echo the request-and-intent context fingerprint and is
+accepted only for the owning user while the report is processing or running. Candidate SQL,
+declared semantic keys and relationship IDs are untrusted. The shared Phase 4A candidate
+conversion validates the declarations and forbids model-owned parameters, then the candidate
+enters `SqlProductionRouter` and the existing `GuardrailFactory` pipeline. Only an accepted
+result becomes an internal `SqlExecutionPlan`; SQL and parameters are not returned through
+the HTTP response. The endpoint never executes the database query.
+
+Production JOIN execution remains disabled by the tracked allow-list (`maxJoins = 0`, no
+enabled relationships). Agentic provider availability also remains disabled: no model SDK,
+paid model API or backend model client is registered by this boundary.
 
 The runtime `SemanticCatalogRegistry` is the authoritative source shared by the deterministic parser, Ollama prompt projection, Ollama JSON Schema, backend compatibility validation and Query Builder runtime. The LLM-first model-facing projection contains only semantic keys, labels, business descriptions, conceptual Turkish/English aliases and allowed semantic operations. Source names, source compatibility, physical objects, columns, SQL expressions and query-mapping references stay in the backend. Source is selected by intersecting authoritative catalog compatibility after model output validation.
 

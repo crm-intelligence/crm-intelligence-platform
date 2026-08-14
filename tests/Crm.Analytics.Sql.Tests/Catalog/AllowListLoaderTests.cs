@@ -100,7 +100,16 @@ public class AllowListLoaderTests
             "vw_sales": {
               "columns": ["region", "customer_id"],
               "scopeColumn": "region",
-              "joinPaths": [{ "to": "hr_employees", "on": "vw_sales.customer_id = hr_employees.id" }]
+              "joinPaths": [{
+                "id": "sales.employee",
+                "to": "hr_employees",
+                "leftColumn": "customer_id",
+                "rightColumn": "id",
+                "cardinality": "manyToOne",
+                "leftRuntime": "dwh",
+                "rightRuntime": "dwh",
+                "allowedJoinTypes": ["inner"]
+              }]
             }
           }
         }
@@ -108,6 +117,39 @@ public class AllowListLoaderTests
 
         var exception = Assert.Throws<CatalogValidationException>(() => AllowListLoader.FromJson(json));
         Assert.Contains("hr_employees", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Desteklenmeyen_JOIN_tipi_reddedilir()
+    {
+        var json = """
+        {
+          "objects": {
+            "vw_sales": {
+              "columns": ["region", "customer_id"],
+              "scopeColumn": "region",
+              "joinPaths": [{
+                "id": "sales.customer",
+                "to": "vw_customer",
+                "leftColumn": "customer_id",
+                "rightColumn": "customer_id",
+                "cardinality": "manyToOne",
+                "leftRuntime": "dwh",
+                "rightRuntime": "dwh",
+                "allowedJoinTypes": ["cross"]
+              }]
+            },
+            "vw_customer": {
+              "columns": ["region", "customer_id"],
+              "scopeColumn": "region"
+            }
+          }
+        }
+        """;
+
+        var exception = Assert.Throws<CatalogValidationException>(
+            () => AllowListLoader.FromJson(json));
+        Assert.Contains("okunamadi", exception.Message, StringComparison.Ordinal);
     }
 
     [Theory]
@@ -206,8 +248,26 @@ public class AllowListLoaderTests
               "columns": ["region", "customer_id"],
               "scopeColumn": "region",
               "joinPaths": [
-                { "to": "vw_customer", "on": "vw_sales.customer_id = vw_customer.customer_id" },
-                { "to": "vw_customer", "on": "vw_sales.region = vw_customer.region" }
+                {
+                  "id": "sales.customer.id",
+                  "to": "vw_customer",
+                  "leftColumn": "customer_id",
+                  "rightColumn": "customer_id",
+                  "cardinality": "manyToOne",
+                  "leftRuntime": "dwh",
+                  "rightRuntime": "dwh",
+                  "allowedJoinTypes": ["inner"]
+                },
+                {
+                  "id": "sales.customer.region",
+                  "to": "vw_customer",
+                  "leftColumn": "region",
+                  "rightColumn": "region",
+                  "cardinality": "manyToMany",
+                  "leftRuntime": "dwh",
+                  "rightRuntime": "dwh",
+                  "allowedJoinTypes": ["inner"]
+                }
               ]
             },
             "vw_customer": { "columns": ["customer_id", "region"], "scopeColumn": "region" }

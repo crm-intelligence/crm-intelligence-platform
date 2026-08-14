@@ -9,6 +9,7 @@ namespace Crm.Analytics.Sql.Catalog;
 public sealed class SemanticCatalogRegistry
 {
     private readonly IReadOnlyDictionary<DataSource, SemanticCatalogSource> sources;
+    private readonly IReadOnlyDictionary<DataSource, ApprovedJoinGraph> joinGraphs;
 
     public SemanticCatalogRegistry(
         IReadOnlyDictionary<DataSource, SemanticCatalogSource> sources)
@@ -20,14 +21,17 @@ public sealed class SemanticCatalogRegistry
                 nameof(sources));
         }
 
-        foreach (var source in sources.Values)
+        var validatedGraphs = new Dictionary<DataSource, ApprovedJoinGraph>();
+        foreach (var (runtime, source) in sources)
         {
             ArgumentNullException.ThrowIfNull(source.Catalog);
             ArgumentNullException.ThrowIfNull(source.AllowList);
             SemanticCatalogMetadataValidator.Validate(source.Catalog);
+            validatedGraphs[runtime] = ApprovedJoinGraph.Create(runtime, source.AllowList);
         }
 
         this.sources = new Dictionary<DataSource, SemanticCatalogSource>(sources);
+        joinGraphs = validatedGraphs;
     }
 
     public IReadOnlyDictionary<DataSource, SemanticCatalogSource> Sources => sources;
@@ -36,6 +40,11 @@ public sealed class SemanticCatalogRegistry
         sources.TryGetValue(source, out var value)
             ? value
             : throw new KeyNotFoundException($"Semantic catalog source bulunamadi: '{source}'.");
+
+    internal ApprovedJoinGraph GetApprovedJoinGraph(DataSource source) =>
+        joinGraphs.TryGetValue(source, out var value)
+            ? value
+            : throw new KeyNotFoundException($"Approved join graph source bulunamadi: '{source}'.");
 
     public static SemanticCatalogRegistry CreateDefault() => new(
         new Dictionary<DataSource, SemanticCatalogSource>

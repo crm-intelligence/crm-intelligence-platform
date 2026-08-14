@@ -36,6 +36,11 @@ public sealed class DeterministicQueryBuilder(
     /// <summary>Parametre oneki. Guardrail'in urettikleriyle (@p, @scope) cakismaz.</summary>
     private const string ParameterPrefix = "@f";
 
+    internal MetricCatalogDocument Catalog => catalog;
+
+    internal DeterministicQueryCapabilities Capabilities =>
+        DeterministicQueryCapabilities.Current;
+
     public QueryBuildResult Build(CanonicalRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -309,6 +314,13 @@ public sealed class DeterministicQueryBuilder(
             return column;
         }
 
+        if (!DeterministicQueryCapabilities.Current.SupportsTimeGrain(grain))
+        {
+            failure = QueryBuildResult.Failure(ReasonCode.CL002,
+                $"Desteklenmeyen zaman kirilimi: {grain}. Yil, ceyrek ve ay desteklenir.");
+            return column;
+        }
+
         switch (grain)
         {
             case TimeGrain.Year:
@@ -321,9 +333,8 @@ public sealed class DeterministicQueryBuilder(
                 return BuildCall("DATEPART", BuildColumnReference("quarter"), column);
 
             default:
-                failure = QueryBuildResult.Failure(ReasonCode.CL002,
-                    $"Desteklenmeyen zaman kirilimi: {grain}. Yil, ceyrek ve ay desteklenir.");
-                return column;
+                throw new InvalidOperationException(
+                    $"Capability descriptor expression mapping olmadan '{grain}' grain'ini destekliyor.");
         }
     }
 

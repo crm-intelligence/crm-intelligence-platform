@@ -48,6 +48,27 @@ public sealed record SqlProductionOptions(
 public static class SqlProductionFactory
 {
     /// <summary>
+    /// Phase 4A production composition has no real reasoning provider and therefore cannot
+    /// register AgenticSqlQueryStrategy. Tests compose it explicitly with a fake client.
+    /// </summary>
+    internal static AgenticSqlAvailability ProductionAgenticAvailability =>
+        AgenticSqlAvailability.DisabledNoProvider;
+
+    internal static ISqlAgentBackend CreateSqlAgentBackendForOlist(
+        IDecisionAuditWriter auditWriter,
+        SqlProductionOptions? options = null,
+        SemanticCatalogRegistry? semanticCatalogs = null)
+    {
+        ArgumentNullException.ThrowIfNull(auditWriter);
+        var settings = options ?? new SqlProductionOptions();
+        return new SqlAgentBackend(
+            semanticCatalogs ?? SemanticCatalogRegistry.CreateDefault(),
+            CreateParserFactory(settings),
+            auditWriter,
+            settings);
+    }
+
+    /// <summary>
     /// Assembly'ye gomulu Olist katalogu ve allow-list'i ile servis kurar.
     /// </summary>
     /// <remarks>
@@ -131,8 +152,17 @@ public static class SqlProductionFactory
     {
         new CatalogValidator(parserFactory).Validate(catalog, allowList);
         var gate = new AmbiguityGate(settings.ConfidenceThreshold);
+        var queryBuilder = new DeterministicQueryBuilder(
+            parserFactory, catalog, allowList);
+        var deterministicStrategy = new DeterministicSqlQueryStrategy(queryBuilder);
+        ISqlQueryStrategy[] strategies = ProductionAgenticAvailability switch
+        {
+            AgenticSqlAvailability.DisabledNoProvider => [deterministicStrategy],
+            _ => throw new InvalidOperationException(
+                "Agentic SQL provider composition tanimlanmadan availability acilamaz.")
+        };
         var router = new SqlProductionRouter(
-            new DeterministicQueryBuilder(parserFactory, catalog, allowList),
+            new QueryStrategyRouter(strategies, queryBuilder),
             allowList,
             parserFactory,
             auditWriter,
@@ -142,9 +172,9 @@ public static class SqlProductionFactory
         return new SqlSourceRuntime(
             source, new CatalogTermRequestParser(catalog), router, catalog, gate);
     }
+}
 
-    /// <summary>
-    /// Dil modeli baglantisi tanimlanmadiginda kullanilan, <b>hicbir zaman taslak uretmeyen</b>
-    /// saglayici. Fail-closed: model yoksa serbest analiz yolu kapalidir.
-    /// </summary>
+internal enum AgenticSqlAvailability
+{
+    DisabledNoProvider
 }

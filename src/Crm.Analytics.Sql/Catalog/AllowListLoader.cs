@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
+using Crm.Analytics.Sql.Contracts;
 
 namespace Crm.Analytics.Sql.Catalog;
 
@@ -9,9 +10,9 @@ namespace Crm.Analytics.Sql.Catalog;
 /// uygulama baslamaz.
 /// </summary>
 /// <remarks>
-/// Burada JOIN kosullarinin SQL olarak gecerliligi dogrulanmaz; bu, T-SQL parser gerektirdigi
-/// icin <c>CatalogValidator</c>'in isidir. Ayrim bilinclidir: yukleyici veritabani veya parser
-/// bagimliligi tasimaz, boylece konfigurasyon dogrulamasi izole test edilebilir.
+/// Relationship contract'i serbest SQL kosulu tasimaz. Logical source, approved kolon,
+/// cardinality, runtime ve JOIN type alanlari parser veya veritabani kesfi gerektirmeden
+/// yukleme aninda dogrulanir.
 /// </remarks>
 public static partial class AllowListLoader
 {
@@ -24,6 +25,12 @@ public static partial class AllowListLoader
         AllowTrailingCommas = false,
         ReadCommentHandling = JsonCommentHandling.Disallow
     };
+
+    static AllowListLoader()
+    {
+        SerializerOptions.Converters.Add(
+            new JsonStringEnumConverter(JsonNamingPolicy.CamelCase, allowIntegerValues: false));
+    }
 
     public static AllowListDocument FromJson(string json)
     {
@@ -66,6 +73,7 @@ public static partial class AllowListLoader
 
         ValidatePhysicalNames(document, errors);
         ValidateScenarioObjects(document, errors);
+        ValidateRelationshipIds(document, errors);
 
         ValidateIdentityColumns(document, errors);
 
@@ -255,15 +263,48 @@ public static partial class AllowListLoader
     {
         foreach (var joinPath in allowed.JoinPaths)
         {
-            if (!document.HasObject(joinPath.To))
+            var target = document.FindObject(joinPath.To);
+            if (target is null)
             {
                 errors.Add(
                     $"'{objectName}' icin tanimli JOIN hedefi '{joinPath.To}' allow-list'te yok.");
+                continue;
             }
 
-            if (string.IsNullOrWhiteSpace(joinPath.On))
+            if (!IsValidRelationshipId(joinPath.Id))
             {
-                errors.Add($"'{objectName}' -> '{joinPath.To}' JOIN kosulu bos.");
+                errors.Add($"'{objectName}' relationship id gecersiz: '{joinPath.Id}'.");
+            }
+
+            if (!IsValidIdentifier(joinPath.LeftColumn)
+                || !allowed.HasColumn(joinPath.LeftColumn))
+            {
+                errors.Add(
+                    $"'{joinPath.Id}' relationship sol JOIN kolonu '{objectName}.{joinPath.LeftColumn}' izinli degil.");
+            }
+
+            if (!IsValidIdentifier(joinPath.RightColumn)
+                || !target.HasColumn(joinPath.RightColumn))
+            {
+                errors.Add(
+                    $"'{joinPath.Id}' relationship sag JOIN kolonu '{joinPath.To}.{joinPath.RightColumn}' izinli degil.");
+            }
+
+            if (joinPath.LeftRuntime != joinPath.RightRuntime)
+            {
+                errors.Add(
+                    $"'{joinPath.Id}' relationship runtime sinirini asiyor: " +
+                    $"'{joinPath.LeftRuntime}' -> '{joinPath.RightRuntime}'.");
+            }
+
+            if (joinPath.AllowedJoinTypes.Count == 0)
+            {
+                errors.Add($"'{joinPath.Id}' relationship en az bir izinli JOIN tipi tasimalidir.");
+            }
+
+            if (joinPath.AllowedJoinTypes.Count != joinPath.AllowedJoinTypes.Distinct().Count())
+            {
+                errors.Add($"'{joinPath.Id}' relationship JOIN tipleri benzersiz olmalidir.");
             }
         }
 
@@ -277,6 +318,19 @@ public static partial class AllowListLoader
             errors.Add(
                 $"'{objectName}' -> '{duplicate}' icin birden fazla JOIN yolu tanimli. " +
                 "Hangisinin kullanilacagi belirsiz kalmamalidir.");
+        }
+    }
+
+    private static void ValidateRelationshipIds(
+        AllowListDocument document,
+        List<string> errors)
+    {
+        foreach (var duplicate in document.Objects.Values
+            .SelectMany(allowed => allowed.JoinPaths)
+            .GroupBy(path => path.Id, StringComparer.OrdinalIgnoreCase)
+            .Where(group => group.Count() > 1))
+        {
+            errors.Add($"Relationship id benzersiz degil: '{duplicate.Key}'.");
         }
     }
 
@@ -299,6 +353,9 @@ public static partial class AllowListLoader
     private static bool IsValidObjectName(string value) =>
         !string.IsNullOrWhiteSpace(value) && ObjectNamePattern().IsMatch(value);
 
+    internal static bool IsValidRelationshipId(string value) =>
+        !string.IsNullOrWhiteSpace(value) && RelationshipIdPattern().IsMatch(value);
+
     // Kasitli olarak dar: yalnizca duz identifier. Koseli parantez, tirnak, bosluk, noktali
     // virgul ve cok parcali ad (sema disinda) kabul edilmez.
     [GeneratedRegex("^[A-Za-z_][A-Za-z0-9_]{0,127}$", RegexOptions.CultureInvariant)]
@@ -306,4 +363,7 @@ public static partial class AllowListLoader
 
     [GeneratedRegex("^[A-Za-z_][A-Za-z0-9_]{0,127}(\\.[A-Za-z_][A-Za-z0-9_]{0,127})?$", RegexOptions.CultureInvariant)]
     private static partial Regex ObjectNamePattern();
+
+    [GeneratedRegex("^[A-Za-z_][A-Za-z0-9_.-]{0,127}$", RegexOptions.CultureInvariant)]
+    private static partial Regex RelationshipIdPattern();
 }
