@@ -111,7 +111,8 @@ public sealed class ApplicationAuditAndTransactionTests
 
         Assert.Throws<ArgumentException>(() => new ApplicationAuditEvent(
             first.EventId, first.EventType, first.Outcome,
-            DateTimeOffset.Now, first.RequestId, null, null, null, null,
+            new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.FromHours(3)),
+            first.RequestId, null, null, null, null,
             null, null));
     }
 
