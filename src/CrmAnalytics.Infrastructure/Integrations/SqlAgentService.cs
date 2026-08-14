@@ -33,6 +33,95 @@ internal sealed class SqlAgentService(
     private const string ToolNotFound = "not_found";
     private const string ToolRejected = "rejected";
 
+    public Task<SqlAgentServiceResult<SqlAgentCapabilityResponse>>
+        AnalyzePreparedCapabilityAsync(
+            string requestId,
+            string conversationId,
+            string? canonicalRequestJson,
+            CopilotSqlAgentIntent intent,
+            CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(requestId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(conversationId);
+        ArgumentNullException.ThrowIfNull(intent);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        CanonicalQuery query;
+        try
+        {
+            query = MapIntent(intent);
+        }
+        catch (Exception exception) when (exception is ArgumentException
+            or JsonException or NotSupportedException)
+        {
+            return Task.FromResult(
+                ControlledFailure<SqlAgentCapabilityResponse>(
+                    "analyze_query_capability",
+                    "invalid",
+                    "INVALID_CANONICAL_INTENT",
+                    400));
+        }
+
+        CanonicalRequest? canonical = null;
+        if (!string.IsNullOrWhiteSpace(canonicalRequestJson))
+        {
+            try
+            {
+                canonical = CanonicalRequestSerializer.Deserialize(
+                    canonicalRequestJson);
+            }
+            catch (Exception exception) when (exception is ArgumentException
+                or JsonException or NotSupportedException)
+            {
+                return Task.FromResult(
+                    ControlledFailure<SqlAgentCapabilityResponse>(
+                        "analyze_query_capability",
+                        "invalid",
+                        "INVALID_CANONICAL_INTENT",
+                        400));
+            }
+
+            if (!string.Equals(canonical.RequestId, requestId,
+                    StringComparison.Ordinal)
+                || !string.Equals(canonical.ConversationId, conversationId,
+                    StringComparison.Ordinal)
+                || canonical.Source != DataSource.Dwh)
+            {
+                return Task.FromResult(
+                    ControlledFailure<SqlAgentCapabilityResponse>(
+                        "analyze_query_capability",
+                        ToolRejected,
+                        "REQUEST_CANONICAL_BINDING_INVALID",
+                        409));
+            }
+
+            var bindingError = ValidateIntentBinding(canonical, query);
+            if (bindingError is not null)
+            {
+                Log("analyze_query_capability", ToolRejected,
+                    bindingError.ReasonCode);
+                return Task.FromResult(
+                    Failure<SqlAgentCapabilityResponse>(bindingError));
+            }
+        }
+
+        var decision = backend.Analyze(DataSource.Dwh, query);
+        if (decision.Outcome != QueryCapabilityOutcome.Unsupported
+            && canonical is null)
+        {
+            return Task.FromResult(
+                ControlledFailure<SqlAgentCapabilityResponse>(
+                    "analyze_query_capability",
+                    ToolRejected,
+                    "CANONICAL_INTENT_NOT_READY",
+                    409));
+        }
+
+        return Task.FromResult(CapabilitySuccess(
+            requestId, canonicalRequestJson, intent, query,
+            canonical, decision));
+    }
+
     public async Task<SqlAgentServiceResult<SqlAgentCapabilityResponse>>
         AnalyzeCapabilityAsync(
             SqlAgentIntentRequest request,
@@ -47,35 +136,13 @@ internal sealed class SqlAgentService(
         }
 
         var decision = backend.Analyze(DataSource.Dwh, bound.Query!);
-        if (decision.Outcome == QueryCapabilityOutcome.Unsupported)
-        {
-            Log("analyze_query_capability", ToolUnsupported, FirstReason(decision));
-            return Success(new SqlAgentCapabilityResponse(
-                ToolUnsupported,
-                Name(decision.Outcome),
-                Name(decision.Complexity),
-                decision.Features.Select(Name).ToArray(),
-                decision.Reasons.Select(Name).ToArray(),
-                null));
-        }
-
-        var bindingError = ValidateIntentBinding(bound.Canonical!, bound.Query!);
-        if (bindingError is not null)
-        {
-            Log("analyze_query_capability", ToolRejected, bindingError.ReasonCode);
-            return Failure<SqlAgentCapabilityResponse>(bindingError);
-        }
-
-        var fingerprint = CreateFingerprint(
-            request.RequestId, bound.CanonicalJson!, request.Intent);
-        Log("analyze_query_capability", ToolSucceeded, Name(decision.Outcome));
-        return Success(new SqlAgentCapabilityResponse(
-            ToolSucceeded,
-            Name(decision.Outcome),
-            Name(decision.Complexity),
-            decision.Features.Select(Name).ToArray(),
-            decision.Reasons.Select(Name).ToArray(),
-            fingerprint));
+        return CapabilitySuccess(
+            request.RequestId,
+            bound.CanonicalJson,
+            request.Intent,
+            bound.Query!,
+            bound.Canonical,
+            decision);
     }
 
     public async Task<SqlAgentServiceResult<SqlAgentQueryContextResponse>>
@@ -697,6 +764,52 @@ internal sealed class SqlAgentService(
         return CryptographicOperations.FixedTimeEquals(
             Encoding.ASCII.GetBytes(expected),
             Encoding.ASCII.GetBytes(actual.ToLowerInvariant()));
+    }
+
+    private SqlAgentServiceResult<SqlAgentCapabilityResponse>
+        CapabilitySuccess(
+            string requestId,
+            string? canonicalJson,
+            CopilotSqlAgentIntent intent,
+            CanonicalQuery query,
+            CanonicalRequest? canonical,
+            QueryStrategyDecision decision)
+    {
+        if (decision.Outcome == QueryCapabilityOutcome.Unsupported)
+        {
+            Log("analyze_query_capability", ToolUnsupported,
+                FirstReason(decision));
+            return Success(new SqlAgentCapabilityResponse(
+                ToolUnsupported,
+                Name(decision.Outcome),
+                Name(decision.Complexity),
+                decision.Features.Select(Name).ToArray(),
+                decision.Reasons.Select(Name).ToArray(),
+                null));
+        }
+
+        var bindingError = canonical is null
+            ? new SqlAgentError(
+                ToolRejected, "CANONICAL_INTENT_NOT_READY", 409)
+            : ValidateIntentBinding(canonical, query);
+        if (bindingError is not null)
+        {
+            Log("analyze_query_capability", ToolRejected,
+                bindingError.ReasonCode);
+            return Failure<SqlAgentCapabilityResponse>(bindingError);
+        }
+
+        var fingerprint = CreateFingerprint(
+            requestId, canonicalJson!, intent);
+        Log("analyze_query_capability", ToolSucceeded,
+            Name(decision.Outcome));
+        return Success(new SqlAgentCapabilityResponse(
+            ToolSucceeded,
+            Name(decision.Outcome),
+            Name(decision.Complexity),
+            decision.Features.Select(Name).ToArray(),
+            decision.Reasons.Select(Name).ToArray(),
+            fingerprint));
     }
 
     private static string FirstReason(QueryStrategyDecision decision) =>

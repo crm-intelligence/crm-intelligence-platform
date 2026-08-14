@@ -4,4 +4,6 @@ public sealed record CreateReportRequestCommand(
     string Prompt,
     string ConversationId,
     string? PreviousRequestId,
-    string CorrelationId);
+    string CorrelationId,
+    string? PreparedRequestId = null,
+    DateTimeOffset? PreparedCreatedAt = null);

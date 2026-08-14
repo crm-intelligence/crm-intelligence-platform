@@ -12,6 +12,19 @@ For Pending outbox records, inspect attempt count, next-attempt time, lock expir
 
 For Service Bus DLQ, inspect message ID, delivery count, enqueued time, dead-letter reason, and correlation metadata. Do not copy application bodies into chat/tickets. Duplicate delivery is expected under at-least-once delivery; durable request transitions, notification delivery IDs, and card-action claims provide idempotency boundaries, not global exactly-once execution.
 
+For capability-routed submissions, `deterministic` must produce one
+`ReportProcessingRequested` record. `agentic_required` and `unsupported` must produce none;
+an agentic request remains `Processing` while the external Copilot SQL Reasoning Agent uses
+the request ID, V2 intent and returned context fingerprint with `/api/sql-agent/tools/*` and
+`/api/sql-agent/candidates`. Do not repair a routing error by deleting an outbox record,
+cancelling a queue message or changing request fields directly.
+
+During Copilot Studio migration use `planned-routed`, `planned-revision-routed` and
+`planned-clarification-routed`, each with the full V1 plan and V2 intent in one request. Never
+chain the legacy `/planned` endpoint to `/api/sql-agent/capabilities/analyze`; the legacy call
+commits deterministic dispatch before capability analysis and therefore reintroduces the
+race.
+
 ## Migrations and rollback
 
 Startup must not migrate the database. Download the idempotent SQL artifact, have a DBA review target, backup/recovery posture, locks, and rollback implications, then apply through the approved database pipeline. Record script SHA and migration IDs.

@@ -2,6 +2,7 @@ using Crm.Analytics.Sql.Audit;
 using Crm.Analytics.Sql.Catalog;
 using Crm.Analytics.Sql.Service;
 using CrmAnalytics.Application.Abstractions.Integrations;
+using CrmAnalytics.Application.ReportRequests;
 using CrmAnalytics.Application.SqlAgent;
 using CrmAnalytics.Application.SqlProduction;
 using Microsoft.Extensions.Configuration;
@@ -55,7 +56,14 @@ public static class SqlProductionServiceCollectionExtensions
                     configured.SqlVersionName),
                 serviceProvider.GetRequiredService<SemanticCatalogRegistry>());
         });
-        services.AddScoped<ISqlAgentService, SqlAgentService>();
+        services.AddScoped<SqlAgentService>();
+        services.AddScoped<ISqlAgentService>(serviceProvider =>
+            serviceProvider.GetRequiredService<SqlAgentService>());
+        services.AddScoped<IPreparedSqlAgentCapabilityService>(
+            serviceProvider =>
+                serviceProvider.GetRequiredService<SqlAgentService>());
+        services.AddScoped<IRoutedReportRequestSubmissionService,
+            CapabilityAwareReportRequestSubmissionService>();
 
         var provider = configuration[
             $"{SqlProductionProviderOptions.SectionName}:Provider"];
