@@ -80,6 +80,47 @@ The backend-owned `QueryCapabilityAnalyzer` returns `deterministic`, `agentic_re
 `unsupported`. Semantic tools project only the context reachable from the bound intent;
 there are no catalog, schema-discovery, sample-data or database-execution endpoints.
 
+### Atomic capability-aware report submission
+
+The legacy Copilot V1 migration path remains behaviorally unchanged:
+
+`Copilot V1 plan -> /api/report-requests/planned -> immediate deterministic processing outbox`
+
+The same legacy behavior remains on `planned-revision` and
+`planned-clarification`. Existing Teams and Copilot Studio integrations continue to use
+those endpoints until they are migrated.
+
+The additive routed path submits the full V1 plan and the V2
+`CopilotSqlAgentIntent` together:
+
+`V1 plan + V2 intent -> /planned-routed -> V1 backend validation -> V1/V2 binding -> capability -> deterministic | agentic_required | unsupported`
+
+Equivalent routed endpoints are
+`POST /api/report-requests/{id}/planned-revision-routed` and
+`POST /api/report-requests/{id}/planned-clarification-routed`. Revision preserves the
+source ownership, completed-source requirement, conversation lineage and
+`PreviousRequestId`; clarification preserves the existing request ID, ownership and
+waiting-for-clarification lifecycle.
+
+The routed service obtains a validated Canonical V1 base through the existing submitted-plan
+production path and applies the existing SQL-agent V1-to-V2 binding and
+`QueryCapabilityAnalyzer`. A supported mismatch returns the SQL-agent
+`INTENT_REQUEST_MISMATCH` error before persistence or mutation. Unsupported V2 intent uses
+the analyzer's existing unsupported semantics and is rejected through legal aggregate
+transitions.
+
+Only a completed `deterministic` decision appends `ReportProcessingRequested`, exactly once,
+with the existing submitted-plan payload. An `agentic_required` decision stores the
+canonical binding, transitions the request to `Processing`, returns the context fingerprint,
+and appends no deterministic processing message. An `unsupported` decision transitions the
+request through `Validating` to `Rejected` and appends no processing message. Report,
+conversation, audit and outbox writes remain within the existing application transaction.
+
+Copilot Studio must not implement `/planned -> /api/sql-agent/capabilities/analyze`.
+The legacy endpoint has already committed a processing outbox record before the second call,
+which recreates the execution-before-routing race. Migration must switch each initial,
+revision or clarification operation to its corresponding routed endpoint atomically.
+
 An agentic candidate submission must echo the request-and-intent context fingerprint and is
 accepted only for the owning user while the report is processing or running. Candidate SQL,
 declared semantic keys and relationship IDs are untrusted. The shared Phase 4A candidate

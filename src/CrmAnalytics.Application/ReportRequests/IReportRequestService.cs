@@ -23,6 +23,25 @@ public interface IReportRequestService
         throw new NotSupportedException(
             "Submitted semantic plans are not supported by this service.");
 
+    Task<CreateReportRequestResult> CreatePlannedAwaitingAgenticAsync(
+        CreateReportRequestCommand command,
+        AuthenticatedUserContext user,
+        SubmittedSemanticPlanningResult semanticPlan,
+        string canonicalRequestJson,
+        CancellationToken cancellationToken) =>
+        throw new NotSupportedException(
+            "Agentic report creation is not supported by this service.");
+
+    Task<CreateReportRequestResult> CreateRejectedPlannedAsync(
+        CreateReportRequestCommand command,
+        AuthenticatedUserContext user,
+        SubmittedSemanticPlanningResult semanticPlan,
+        string rejectionCode,
+        string rejectionMessage,
+        CancellationToken cancellationToken) =>
+        throw new NotSupportedException(
+            "Routed report rejection is not supported by this service.");
+
     Task<ReviseReportRequestResult> ReviseAsync(
         ReviseReportRequestCommand command,
         CancellationToken cancellationToken);
@@ -40,6 +59,25 @@ public interface IReportRequestService
         CancellationToken cancellationToken) =>
         throw new NotSupportedException(
             "Submitted revision plans are not supported by this service.");
+
+    Task<ReviseReportRequestResult> RevisePlannedAwaitingAgenticAsync(
+        ReviseReportRequestCommand command,
+        AuthenticatedUserContext user,
+        SubmittedSemanticPlanningResult semanticPlan,
+        string canonicalRequestJson,
+        CancellationToken cancellationToken) =>
+        throw new NotSupportedException(
+            "Agentic report revision is not supported by this service.");
+
+    Task<ReviseReportRequestResult> ReviseRejectedPlannedAsync(
+        ReviseReportRequestCommand command,
+        AuthenticatedUserContext user,
+        SubmittedSemanticPlanningResult semanticPlan,
+        string rejectionCode,
+        string rejectionMessage,
+        CancellationToken cancellationToken) =>
+        throw new NotSupportedException(
+            "Routed revision rejection is not supported by this service.");
 
     Task<GetReportRequestResult?> GetByIdAsync(
         string requestId,
@@ -101,6 +139,28 @@ public interface IReportRequestService
         CancellationToken cancellationToken) =>
         throw new NotSupportedException(
             "Submitted clarification plans are not supported by this service.");
+
+    Task<UpdateReportRequestResult>
+        SubmitPlannedClarificationAwaitingAgenticAsync(
+            SubmitReportClarificationCommand command,
+            string correlationId,
+            AuthenticatedUserContext user,
+            SubmittedSemanticPlanningResult semanticPlan,
+            string canonicalRequestJson,
+            CancellationToken cancellationToken) =>
+        throw new NotSupportedException(
+            "Agentic clarification routing is not supported by this service.");
+
+    Task<UpdateReportRequestResult> RejectPlannedClarificationAsync(
+        SubmitReportClarificationCommand command,
+        string correlationId,
+        AuthenticatedUserContext user,
+        SubmittedSemanticPlanningResult semanticPlan,
+        string rejectionCode,
+        string rejectionMessage,
+        CancellationToken cancellationToken) =>
+        throw new NotSupportedException(
+            "Routed clarification rejection is not supported by this service.");
 
     Task<UpdateReportRequestResult> FailAsync(
         FailReportRequestCommand command,
