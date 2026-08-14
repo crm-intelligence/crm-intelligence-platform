@@ -93,10 +93,12 @@ public sealed class JoinPathAllowedCheck : IGuardrailCheck
 
         // Yon guvenlik acisindan anlam tasimaz: A->B tanimliysa B->A de gecerlidir.
         var forward = context.AllowList.FindObject(logicalLeft)?.JoinPaths
-            .Any(path => path.To.Equals(logicalRight, StringComparison.OrdinalIgnoreCase)) == true;
+            .Any(path => path.Enabled
+                && path.To.Equals(logicalRight, StringComparison.OrdinalIgnoreCase)) == true;
 
         var backward = context.AllowList.FindObject(logicalRight)?.JoinPaths
-            .Any(path => path.To.Equals(logicalLeft, StringComparison.OrdinalIgnoreCase)) == true;
+            .Any(path => path.Enabled
+                && path.To.Equals(logicalLeft, StringComparison.OrdinalIgnoreCase)) == true;
 
         return forward || backward;
     }

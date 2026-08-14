@@ -1,6 +1,7 @@
 using Crm.Analytics.Sql.Audit;
 using Crm.Analytics.Sql.Catalog;
 using Crm.Analytics.Sql.Contracts;
+using Crm.Analytics.Sql.Contracts.V2;
 using Crm.Analytics.Sql.Guardrail;
 using Crm.Analytics.Sql.Nlu;
 using Crm.Analytics.Sql.Parsing;
@@ -9,7 +10,7 @@ using Crm.Analytics.Sql.QueryBuilder;
 namespace Crm.Analytics.Sql.Routing;
 
 /// <summary>
-/// Canonical talebi yalnizca deterministik Query Builder'a yonlendirir ve ciktiyi
+/// Canonical talebi secilen SQL query strategy'sine yonlendirir ve ciktiyi ortak
 /// guardrail hattindan gecirir.
 /// </summary>
 /// <remarks>
@@ -18,19 +19,57 @@ namespace Crm.Analytics.Sql.Routing;
 /// bilincli olarak birakilmamistir — "test amacli bile" birakilmaz.
 /// </para>
 /// <para>
-/// Model SQL'i guvenlik sinirinin disindadir. Query Builder talebi karsilayamiyorsa sistem
-/// fail-closed davranir ve netlestirme veya ret sonucu dondurur.
+/// Strategy tarafindan uretilen SQL onaylanmis degildir. Strategy talebi karsilayamiyorsa
+/// sistem fail-closed davranir; basarili her cikti ortak guardrail hattina girer.
 /// </para>
 /// </remarks>
-public sealed class SqlProductionRouter(
-    DeterministicQueryBuilder queryBuilder,
-    AllowListDocument allowList,
-    TSqlParserFactory parserFactory,
-    IDecisionAuditWriter auditWriter,
-    AmbiguityGate? ambiguityGate = null,
-    DataSource source = DataSource.Dwh)
+public sealed class SqlProductionRouter
 {
-    private readonly AmbiguityGate ambiguityGate = ambiguityGate ?? new AmbiguityGate();
+    private readonly QueryStrategyRouter queryStrategyRouter;
+    private readonly AllowListDocument allowList;
+    private readonly TSqlParserFactory parserFactory;
+    private readonly IDecisionAuditWriter auditWriter;
+    private readonly AmbiguityGate ambiguityGate;
+    private readonly DataSource source;
+
+    internal SqlProductionRouter(
+        QueryStrategyRouter queryStrategyRouter,
+        AllowListDocument allowList,
+        TSqlParserFactory parserFactory,
+        IDecisionAuditWriter auditWriter,
+        AmbiguityGate? ambiguityGate = null,
+        DataSource source = DataSource.Dwh)
+    {
+        this.queryStrategyRouter = queryStrategyRouter;
+        this.allowList = allowList;
+        this.parserFactory = parserFactory;
+        this.auditWriter = auditWriter;
+        this.ambiguityGate = ambiguityGate ?? new AmbiguityGate();
+        this.source = source;
+    }
+
+    /// <summary>
+    /// Mevcut dogrudan cagrilar icin deterministic Fast Path uyumluluk constructor'i.
+    /// SQL yine QueryStrategyRouter uzerinden uretilir.
+    /// </summary>
+    public SqlProductionRouter(
+        DeterministicQueryBuilder queryBuilder,
+        AllowListDocument allowList,
+        TSqlParserFactory parserFactory,
+        IDecisionAuditWriter auditWriter,
+        AmbiguityGate? ambiguityGate = null,
+        DataSource source = DataSource.Dwh)
+        : this(
+            new QueryStrategyRouter(
+                [new DeterministicSqlQueryStrategy(queryBuilder)],
+                queryBuilder),
+            allowList,
+            parserFactory,
+            auditWriter,
+            ambiguityGate,
+            source)
+    {
+    }
 
     public sealed record RoutingResult(
         GuardrailResult Guardrail,
@@ -43,8 +82,80 @@ public sealed class SqlProductionRouter(
         string? rawPrompt = null,
         string? userId = null)
     {
+        return ProduceCoreAsync(
+                request,
+                query: null,
+                scope,
+                rawPrompt,
+                userId,
+                CancellationToken.None)
+            .GetAwaiter()
+            .GetResult();
+    }
+
+    /// <summary>
+    /// Internal async V2 entry point for provider-backed strategies. Public production
+    /// contracts remain unchanged until a real provider integration is explicitly enabled.
+    /// </summary>
+    internal Task<RoutingResult> ProduceAsync(
+        CanonicalRequest request,
+        CanonicalQuery query,
+        UserDataScope scope,
+        CancellationToken cancellationToken,
+        string? rawPrompt = null,
+        string? userId = null)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        return ProduceCoreAsync(request, query, scope, rawPrompt, userId, cancellationToken);
+    }
+
+    internal RoutingResult ProduceCandidate(
+        CanonicalRequest request,
+        UserDataScope scope,
+        QueryBuildResult candidate,
+        string? userId = null)
+    {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(scope);
+        ArgumentNullException.ThrowIfNull(candidate);
+
+        request = request.Source is null ? request with { Source = source } : request;
+        if (request.Source != source)
+        {
+            return RejectWithoutSql(
+                request, scope, ReasonCode.CL001, ProductionPath.QueryBuilder,
+                rawPrompt: null, userId, "Canonical source ile runtime catalog source uyusmuyor.");
+        }
+
+        var verdict = ambiguityGate.Evaluate(request);
+        if (verdict.NeedsClarification)
+        {
+            return RejectWithoutSql(
+                request, scope, verdict.ReasonCode, ProductionPath.QueryBuilder,
+                rawPrompt: null, userId, verdict.Detail);
+        }
+
+        return candidate.IsSuccessful
+            ? Finish(
+                request, scope, candidate.Sql!, candidate.Parameters,
+                ProductionPath.QueryBuilder, rawPrompt: null, userId, source,
+                candidate.Detail)
+            : RejectWithoutSql(
+                request, scope, candidate.ReasonCode, ProductionPath.QueryBuilder,
+                rawPrompt: null, userId, candidate.Detail);
+    }
+
+    private async Task<RoutingResult> ProduceCoreAsync(
+        CanonicalRequest request,
+        CanonicalQuery? query,
+        UserDataScope scope,
+        string? rawPrompt,
+        string? userId,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(scope);
+        cancellationToken.ThrowIfCancellationRequested();
 
         // Backward-compatible direct-router callers enter an already selected immutable
         // source context. Production service always sets Source before reaching here.
@@ -68,7 +179,11 @@ public sealed class SqlProductionRouter(
                 ProductionPath.QueryBuilder, rawPrompt, userId, verdict.Detail);
         }
 
-        var build = queryBuilder.Build(request);
+        var build = query is null
+            ? await queryStrategyRouter.ProduceAsync(request, cancellationToken)
+                .ConfigureAwait(false)
+            : await queryStrategyRouter.ProduceAsync(request, query, cancellationToken)
+                .ConfigureAwait(false);
 
         if (build.IsSuccessful)
         {

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Crm.Analytics.Sql.Contracts;
 
 namespace Crm.Analytics.Sql.Catalog;
 
@@ -204,10 +205,50 @@ public sealed class AllowedObject
         Columns.Contains(columnName, StringComparer.OrdinalIgnoreCase);
 }
 
-/// <summary>Iki obje arasindaki izinli JOIN yolu.</summary>
-/// <param name="To">Hedef obje adi.</param>
-/// <param name="On">JOIN kosulu. Yukleme aninda parse edilerek dogrulanir.</param>
-public sealed record JoinPath(string To, string On);
+/// <summary>
+/// Iki allow-listed logical obje arasindaki reviewed relationship contract'i.
+/// Sol obje, bu tanimin yer aldigi <see cref="AllowedObject.JoinPaths"/> sahibidir.
+/// Bu metadata fiziksel adlardan veya kolon benzerliginden turetilmez.
+/// </summary>
+public sealed record JoinPath
+{
+    /// <summary>Repository genelinde bu allow-list icinde benzersiz relationship anahtari.</summary>
+    public required string Id { get; init; }
+
+    /// <summary>Hedef logical obje adi.</summary>
+    public required string To { get; init; }
+
+    /// <summary>Sol logical objedeki allow-listed JOIN kolonu.</summary>
+    public required string LeftColumn { get; init; }
+
+    /// <summary>Sag logical objedeki allow-listed JOIN kolonu.</summary>
+    public required string RightColumn { get; init; }
+
+    public required RelationshipCardinality Cardinality { get; init; }
+
+    public required DataSource LeftRuntime { get; init; }
+
+    public required DataSource RightRuntime { get; init; }
+
+    public required IReadOnlyList<ApprovedJoinType> AllowedJoinTypes { get; init; }
+
+    /// <summary>Reviewed ancak gecici olarak devre disi bir relationship graph'a alinmaz.</summary>
+    public bool Enabled { get; init; } = true;
+}
+
+public enum RelationshipCardinality
+{
+    OneToOne,
+    OneToMany,
+    ManyToOne,
+    ManyToMany
+}
+
+public enum ApprovedJoinType
+{
+    Inner,
+    Left
+}
 
 /// <summary>
 /// Genel serbest sorgu kataloguna acilmayan fiziksel view ile onu mesru kilan mevcut
