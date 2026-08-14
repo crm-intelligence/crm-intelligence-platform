@@ -1,445 +1,294 @@
-# CRM Analytics — Codex Instructions
+# CRM Intelligence Platform — Codex Instructions
 
-## Goal
+## Purpose and hard boundary
 
-This repository implements a Teams-based CRM analytics system.
+This repository implements governed CRM analytics through Microsoft Teams.
 
-Primary flow:
+Primary submitted-plan flow:
 
-Teams
-→ ASP.NET API
-→ semantic planning
-→ CanonicalRequest
-→ validation / data scope
-→ deterministic Query Builder
-→ Fabric DWH or OLTP
-→ report result
-→ Teams
+`Teams -> Copilot Studio semantic plan -> ASP.NET API -> backend validation -> CanonicalRequest -> data scope -> deterministic Query Builder -> DWH or OLTP -> report result -> Teams`
 
-The model must never generate production SQL.
+Requests without a submitted Copilot plan use the configured Ollama fallback flow.
+
+Models may interpret business semantics. They must never generate production SQL or choose physical database objects, joins, authorization, data scope, source compatibility, timeouts, or execution policy. `DeterministicQueryBuilder` is the only production SQL-generation point.
+
+Fail closed. Clarification is preferable to an unsupported or unsafe semantic substitution.
+
+---
+
+## Source-of-truth order
+
+When repository descriptions disagree, use this order:
+
+1. Runtime code, contracts, tracked configuration, and passing tests.
+2. Current architecture, deployment, and operations documents under `docs/`.
+3. Root `README.md` for orientation only.
+4. `docs/archive/` for historical context only; never use it as a current implementation contract.
+
+Search for symbols before opening large files. Do not infer current behavior from test counts, dated reports, archived plans, or comments in the legacy projects.
 
 ---
 
 ## Work efficiently
 
-Do not scan the entire repository by default.
-
 Before editing:
 
-1. Identify the task category below.
-2. Read only the listed entry files and directly referenced dependencies.
-3. Search for symbols before opening large files.
-4. Do not rediscover architecture already documented here.
-5. Do not inspect unrelated projects unless required by compilation or a failing test.
-6. Prefer targeted tests first. Run full suites only before final verification or when the change is cross-cutting.
-7. Do not produce long architecture reports unless explicitly requested.
-8. Final responses should be concise and report only:
+1. Record branch, HEAD SHA, and `git status --short`.
+2. Classify the task using the routing section below.
+3. Read only the listed entry points and directly referenced dependencies.
+4. Prefer `rg`/`rg --files`; exclude `bin/`, `obj/`, generated databases, and local diagnostics.
+5. Start with the smallest relevant test project or filter.
+6. Inspect another project only when a dependency, compiler error, or failing test proves it is relevant.
 
-   * root cause / goal
-   * changed files
-   * tests
-   * deployment state
-   * blockers
+Do not produce architecture reports unless requested. Do not continue with unrelated improvements after the requested goal is complete.
 
 ---
 
-# Repository map
+## Canonical repository map
 
-## Backend API
+The canonical solution is `CrmAnalytics.slnx`. `global.json` currently specifies .NET SDK 10.0.301 with `latestFeature` roll-forward.
 
-Root:
+Runtime projects under `src/`:
 
-`src/`
+- `CrmAnalytics.Api` — HTTP host, authentication/authorization composition, controllers, health endpoints.
+- `CrmAnalytics.Application` — report lifecycle, conversations, processing, authorization abstractions, outbox contracts.
+- `CrmAnalytics.Contracts` — public/internal transport and Copilot Studio contracts.
+- `CrmAnalytics.Domain` — report-request and conversation domain behavior.
+- `CrmAnalytics.Infrastructure` — persistence, identity/data scope, integrations, messaging, outbox, query execution.
+- `CrmAnalytics.Teams` — Teams host, cards/actions, Copilot Studio client, notifications.
+- `Crm.Analytics.Sql` — semantic catalog, canonical contracts, routing, guardrails, deterministic query construction.
 
-Main projects:
+Test projects under `tests/`:
 
-* `CrmAnalytics.Api`
-* `CrmAnalytics.Application`
-* `CrmAnalytics.Infrastructure`
-* `CrmAnalytics.Contracts`
-* `CrmAnalytics.Domain`
+- `CrmAnalytics.UnitTests`
+- `CrmAnalytics.IntegrationTests`
+- `CrmAnalytics.DataScopeProvisioner.Tests`
+- `Crm.Analytics.Sql.Tests`
+- `Crm.Analytics.Sql.IntegrationTests`
 
-Backend tests:
+Tools:
 
-`tests/`
+- `tools/CrmAnalytics.DataScopeProvisioner` — production-safe unrestricted data-scope provisioning.
+- `tools/Crm.Analytics.Sql.DevData` — deterministic local/test fixture generation.
+- `tools/CrmAnalytics.OllamaSmoke` — local semantic-planning quality evaluation; it is not included in `CrmAnalytics.slnx`, so build it explicitly when changed.
 
----
+Deployment and operations:
 
-## SQL / semantic planning
+- `infra/azure/bicep/` — Azure Container Apps infrastructure definitions.
+- `deploy/sql/` — reviewed SQL deployment artifacts.
+- `deploy/teams/` — Teams manifest and source icons.
+- `deploy/scripts/` — operator examples; never place secrets in them.
+- `scripts/smoke/` — post-deployment smoke checks.
+- `docs/deployment/` and `docs/operations/` — current runbooks and resource state.
 
-Root:
+There are currently no tracked `.github/workflows/` files. Do not assume the CI/deployment workflows described in older documentation exist, and do not invent or edit a workflow unless the task explicitly targets CI/CD.
 
-`src/Crm.Analytics.Sql/`
-
-Important areas:
-
-* `Catalog/`
-* `Contracts/`
-* `Nlu/`
-* `QueryBuilder/`
-* `Service/`
-
-Tests:
-
-* `tests/Crm.Analytics.Sql.Tests/`
-* `tests/Crm.Analytics.Sql.IntegrationTests/`
-
-Primary documentation:
-
-`docs/architecture/semantic-catalog-driven-planning.md`
+`crm-project/` and `crm-project.Tests/` are retained legacy Azure Web App compatibility projects. They are outside `CrmAnalytics.slnx` and are not canonical runtime source. Do not modify or remove them unless the task explicitly targets the legacy cutover.
 
 ---
 
-## Teams
+## Current semantic-planning architecture
 
-Teams host:
+Start with `docs/architecture/semantic-catalog-driven-planning.md`. It is the maintained architecture document for planning behavior.
 
-`src/CrmAnalytics.Teams`
+### Submitted Copilot plan
 
-Teams deployment package:
+For `/planned` requests, Copilot Studio supplies a strict full semantic plan. The backend does not reconstruct metric, grouping, filters, date, or ranking from the raw prompt when that plan is structurally valid.
 
-`deploy/teams/`
+Planned clarification and revision endpoints validate ownership, permission, current data scope, lifecycle state, and the full submitted plan before enqueueing processing. They do not perform semantic planning. Clarification resumes the same logical request; revision creates a child request.
 
-Do not modify Teams for API/query-planning tasks unless the failure is proven to originate in Teams.
+Relevant areas:
 
----
+- `src/CrmAnalytics.Contracts/CopilotStudio/`
+- `src/CrmAnalytics.Api/Integrations/CopilotStudio/`
+- `src/CrmAnalytics.Api/Controllers/ReportRequestsController.cs`
+- `src/CrmAnalytics.Application/ReportRequests/`
+- `src/CrmAnalytics.Teams/Planning/`
+- `src/CrmAnalytics.Teams/Messaging/`
+- `src/CrmAnalytics.Infrastructure/Integrations/SubmittedSemanticPlanningResultMapper.cs`
 
-## Data Scope administration
+### Ollama fallback
 
-Provisioner:
+For requests without a submitted Copilot plan, `Ollama:PlanningMode` selects the flow. Tracked API configuration currently selects `LlmFirst` and `qwen3:8b`; Ollama itself is disabled unless configured. In `LlmFirst`, disabled or invalid model output produces a safe clarification rather than silently dropping into the other planning mode. `EmbeddingFirst` remains a rollback mode. The tracked embedding model is `qwen3-embedding:0.6b`.
 
-`tools/CrmAnalytics.DataScopeProvisioner`
+`LlmFirst` flow:
 
-Use this tool for application data-scope provisioning.
+`natural language -> Qwen structured semantic extraction -> strict JSON validation -> catalog/operation/compatibility validation -> deterministic source selection -> deterministic date calculation -> canonical validation -> data scope -> deterministic Query Builder`
 
-Do not directly INSERT/UPDATE data-scope tables with ad-hoc SQL unless explicitly requested for diagnosis.
+The LLM-first model returns extracted semantic intent, not SQL and not a model-authored `CanonicalRequest`. Source selection and calendar arithmetic remain backend-owned.
 
-Provisioner CLI contract is defined in:
+`EmbeddingFirst` flow:
 
-`ProvisionerOptions.cs`
+`deterministic preprocessing -> date/slot intent -> semantic representations -> embedding retrieval -> discrimination -> completeness gate -> deterministic canonical assembly or candidate-constrained partial Qwen -> canonical validation`
 
-The tool supports:
+Relevant entry files:
 
-* SQL_SERVER
-* SQL_DATABASE
-* MANAGED_IDENTITY_CLIENT_ID
-* TARGET_TENANT_ID
-* TARGET_USER_ID
-* ALLOW_ALL_REGIONS
-* ALLOW_ALL_STORES
-* DRY_RUN
-* CONFIRM_PRODUCTION_WRITE
+- `src/CrmAnalytics.Infrastructure/Integrations/LlmFirstSemanticPlanning.cs`
+- `src/CrmAnalytics.Infrastructure/Integrations/OllamaStructuredPlanningClient.cs`
+- `src/CrmAnalytics.Infrastructure/Integrations/OllamaCanonicalContract*.cs`
+- `src/CrmAnalytics.Infrastructure/Integrations/SemanticPlanning.cs`
+- `src/CrmAnalytics.Infrastructure/Integrations/SemanticCompleteness.cs`
+- `src/CrmAnalytics.Infrastructure/Integrations/SemanticEmbedding*.cs`
+- `src/CrmAnalytics.Infrastructure/Integrations/CrmAnalyticsSqlProductionClient.cs`
 
-Production provisioning should normally execute inside Azure using the runtime managed identity.
-
----
-
-# Query planning architecture
-
-Current planning pipeline:
-
-Natural language
-→ deterministic preprocessing
-→ date / slot intent resolution
-→ semantic representations
-→ embedding candidate retrieval
-→ semantic discrimination
-→ completeness gate
-→ deterministic canonical assembly OR partial Qwen
-→ canonical validation
-→ deterministic Query Builder
-
-Important backend integration files are under:
-
-`src/CrmAnalytics.Infrastructure/Integrations/`
-
-Core components include:
-
-* `SemanticEmbeddingResolver`
-* `SemanticEmbeddingIndex`
-* `SemanticRepresentations`
-* `SemanticCompletenessGate`
-* `SemanticPlanningState`
-* `SemanticCanonicalRequestAssembler`
-* `OllamaStructuredPlanningClient`
-* `OllamaCanonicalContract`
-* `CrmAnalyticsSqlProductionClient`
-
-Do not redesign this pipeline unless explicitly requested.
+Do not redesign or merge these flows unless explicitly requested. Read the configured planning mode before diagnosing a behavior.
 
 ---
 
-# Model responsibilities
+## Semantic and SQL invariants
 
-Planning model:
+`SemanticCatalogRegistry` is the authoritative semantic source. Model-facing projections, deterministic resolution, backend compatibility, and Query Builder behavior must derive from it. Never create a second independent metric/dimension catalog.
 
-`qwen3:8b`
+Aliases describe concepts, not complete user requests. Do not add full prompt sentences or introduce test-specific branches, regex mappings, sentence mappings, thresholds, or hard-coded business values.
 
-Embedding model:
+These invariants must not be weakened:
 
-`qwen3-embedding:0.6b`
+1. Unsupported semantic concepts never reach Query Builder.
+2. Unsupported or rejected requests generate no SQL.
+3. Unknown semantic keys and operations are rejected.
+4. Metric/dimension/filter/source compatibility is validated by the backend catalog.
+5. Source selection comes from authoritative compatibility, never model preference.
+6. Deterministic bypass in `EmbeddingFirst` requires semantic completeness and generic lexical evidence; embedding confidence alone is insufficient.
+7. Candidate-constrained partial Qwen cannot select outside its candidate set.
+8. Resolved semantic slots remain immutable during partial-Qwen resolution.
+9. Data scope is backend enforced and cannot be supplied or widened by a model.
+10. Physical mappings come only from reviewed repository contracts and allow-lists.
+11. Query Builder SQL remains parameterized, allow-listed, and read-only under the supported contract.
+12. Raw prompts, semantic representations, unresolved expressions, model responses, SQL, filter values, user identity, tokens, and credentials must not enter audit/log contracts.
 
-The LLM is NOT an SQL generator.
+DWH is for supported analytical/aggregated reporting. OLTP is only for supported operational-detail queries and is disabled by default in tracked API configuration. Do not invent source compatibility or database objects.
 
-The model may only assist with semantic planning / unresolved candidate discrimination.
-
-It must not choose:
-
-* physical table
-* physical view
-* physical column
-* SQL
-* join strategy
-* authorization
-* data scope
-* execution policy
-
----
-
-# Semantic catalog
-
-`SemanticCatalogRegistry` is the authoritative semantic source.
-
-Do not create a second independent metric/dimension catalog.
-
-Model-facing schema, semantic retrieval and backend compatibility must derive from the authoritative catalog.
-
-Do not add full user sentences as aliases.
-
-Aliases must describe concepts, not test prompts.
-
-Do not introduce test-specific:
-
-* if statements
-* regex mappings
-* sentence mappings
-* thresholds
-* hard-coded business values
+Resolve relative dates deterministically through `src/Crm.Analytics.Sql/Nlu/RelativeDateResolver.cs`. The model must not perform calendar arithmetic. Do not add sentence-specific date rules.
 
 ---
 
-# Safety invariants
+## Data scope and authorization
 
-These rules must not be weakened:
+Application data scope is resolved and enforced in the backend. For runtime data-scope behavior start with:
 
-1. Unsupported semantic concept must never reach Query Builder.
-2. Unsupported request must generate no SQL.
-3. Unsafe semantic substitution is forbidden.
-4. Deterministic bypass requires semantic completeness.
-5. Candidate-constrained Qwen cannot select outside the candidate set.
-6. Resolved semantic slots are immutable during partial-Qwen resolution.
-7. Unknown semantic keys are rejected.
-8. Metric/dimension/filter/source compatibility is backend validated.
-9. Data scope remains backend enforced.
-10. Query Builder is the only production SQL-generation point.
-11. SQL must remain parameterized and allow-listed.
-12. Raw user prompts, raw model responses, SQL, tokens and credentials must not be logged.
+- `src/CrmAnalytics.Application/Identity/`
+- `src/CrmAnalytics.Infrastructure/Identity/`
+- `src/CrmAnalytics.Infrastructure/Integrations/SqlProductionScopeCompatibilityMapper.cs`
+- `tests/CrmAnalytics.UnitTests/ReportDataAccessTests.cs`
+- `tests/Crm.Analytics.Sql.IntegrationTests/Execution/ScopeEnforcementTests.cs`
 
-Fail closed.
+Use `tools/CrmAnalytics.DataScopeProvisioner` for application data-scope provisioning. Its CLI contract is `ProvisionerOptions.cs`. The current tool provisions unrestricted scope only, so both `ALLOW_ALL_REGIONS` and `ALLOW_ALL_STORES` must be `true`. Production writes require `CONFIRM_PRODUCTION_WRITE=true`; start with `DRY_RUN=true`. Prefer execution inside Azure with the runtime managed identity.
 
-When uncertain, clarification is preferable to an incorrect query.
+Do not directly insert/update data-scope tables with ad-hoc SQL unless the task explicitly authorizes diagnostic SQL.
 
----
+For API authorization start with:
 
-# Source contracts
+- `src/CrmAnalytics.Api/Program.cs`
+- `src/CrmAnalytics.Api/Authentication/`
+- `src/CrmAnalytics.Application/Authorization/`
+- `src/CrmAnalytics.Infrastructure/Authorization/`
+- relevant `CrmAnalytics.IntegrationTests`
 
-DWH is for analytical/aggregated reporting.
-
-OLTP is for supported operational-detail queries.
-
-Source selection must come from semantic compatibility, not model preference.
-
-Do not invent source compatibility.
+Never weaken Entra scope/app-role checks, ownership filters, or action-token validation to make a test pass.
 
 ---
 
-# Date handling
+## Task routing
 
-Prefer deterministic date resolution before LLM use.
+### API/report lifecycle
 
-Relevant code:
+Start with `src/CrmAnalytics.Api/Program.cs`, the relevant controller, `src/CrmAnalytics.Application/ReportRequests/`, and `src/CrmAnalytics.Application/ReportProcessing/`. Then inspect the exact infrastructure adapter used by the service.
 
-`src/Crm.Analytics.Sql/Nlu/RelativeDateResolver.cs`
+### Copilot plan, clarification, or revision
 
-Supported generic relative-date handling includes concepts such as:
+Start with the semantic architecture document, `src/CrmAnalytics.Contracts/CopilotStudio/`, API Copilot integrations, `ReportRequestsController`, Teams `Planning`/`Messaging`, and the matching unit/integration tests.
 
-* today / yesterday
-* current / previous week
-* current / previous month
-* current / previous year
-* last N days
-* last N weeks
-* last N months
-* last N years
+### Ollama, embeddings, or semantic quality
 
-Do not add sentence-specific date mappings.
+Start with the semantic architecture document and the relevant integration files listed above, then `src/Crm.Analytics.Sql/Catalog/` and `Nlu/`. Use `tools/CrmAnalytics.OllamaSmoke` only after implementation stabilizes.
 
----
+### Query Builder, guardrail, or physical mapping
 
-# Production SQL objects
+Start with:
 
-Do not invent database objects.
+- `src/Crm.Analytics.Sql/QueryBuilder/`
+- `src/Crm.Analytics.Sql/Guardrail/`
+- `src/Crm.Analytics.Sql/Contracts/`
+- `src/Crm.Analytics.Sql/Catalog/`
+- matching SQL unit and integration tests
 
-Known DWH semantic layer uses approved MART views.
+Inspect existing mapping contracts and execution tests before changing any physical object or expression.
 
-Physical mappings must come from repository contracts / allow-lists.
+### Persistence, outbox, queue, or messaging
 
-OLTP production access is restricted by its operational contract.
+Start with the corresponding folders under `src/CrmAnalytics.Application/` and `src/CrmAnalytics.Infrastructure/`, plus `src/CrmAnalytics.Api/Program.cs`. Preserve transactional outbox semantics, idempotency, retries, and health behavior.
 
-Before changing a physical mapping, inspect the existing contract and tests.
+### Teams
 
----
+Start with `src/CrmAnalytics.Teams/`, its local `README.md`, and `deploy/teams/`. Do not modify Teams for API/query-planning work unless the failure is proven to originate there.
 
-# Azure principles
+### Database migrations
 
-Production resources already exist.
+Start with `src/CrmAnalytics.Infrastructure/Persistence/SqlServer/Migrations/` and `deploy/sql/`. Generate/review idempotent migration artifacts as the repository contract requires. Application startup and Container App deployment must not run `database update`; applying a migration in production is a separately approved DBA operation.
 
-Do not recreate infrastructure unless explicitly requested.
+### Azure deployment
 
-For ordinary code tasks:
+Inspect only `infra/azure/bicep/`, the relevant deployment/operations runbooks, the relevant image/Dockerfile, and authorized current Azure state. Existing resources are inputs; do not recreate them by default.
 
-* no Bicep deployment
-* no Azure resource creation
-* no production deployment
-* no image push
+For ordinary code tasks, do not deploy Bicep, create Azure resources, push images, mutate production data, or change live revisions. Use managed identity and Key Vault patterns already present. Never enable ACR admin credentials. Deploy immutable image digests, not `latest`.
 
-unless the task explicitly asks for deployment.
-
-Use managed identity instead of credentials where already supported.
-
-Never enable ACR admin credentials merely to make deployment easier.
-
-Old Container Apps revisions containing background workers must be deactivated when replaced; 0% HTTP traffic alone does not stop background workers.
+Container Apps revisions that host background workers must be deactivated when replaced; assigning 0% HTTP traffic does not stop their workers.
 
 ---
 
-# Testing strategy
+## Testing and verification
 
-Start with the smallest relevant test project/filter.
+Use this order in proportion to the change:
 
-Typical order:
+1. Targeted test method/class or smallest relevant test project.
+2. Affected project tests.
+3. SQL/application integration tests when contracts, persistence, routing, scope, or execution changed.
+4. `dotnet build CrmAnalytics.slnx -c Release` for cross-project code changes.
+5. Full solution tests only for cross-cutting or release-ready work.
 
-1. targeted unit tests
-2. affected project tests
-3. backend/SQL integration tests if required
-4. Release build
-5. full suite only for cross-cutting or release-ready changes
+Canonical commands:
 
-For semantic-planning work also verify:
+```powershell
+dotnet restore CrmAnalytics.slnx
+dotnet build CrmAnalytics.slnx -c Release --no-restore
+dotnet test CrmAnalytics.slnx -c Release --no-build
+```
 
-* unsupported safety
-* deterministic bypass correctness
-* candidate constraints
-* clarification behavior
-* no SQL on rejected requests
+Use `--no-build` only after building the same configuration and current source. If `CrmAnalytics.OllamaSmoke` changed, build its `.csproj` separately because it is outside the solution.
 
-Do not rerun expensive local-model quality suites after every small code edit.
+For semantic-planning changes verify unsupported safety, clarification behavior, submitted-plan validation, deterministic date handling, candidate constraints when relevant, and no SQL for rejected requests.
 
-Use them only after implementation stabilizes.
+Do not run local-model quality suites after every edit. After code is frozen, use a separate unseen set for new certification. Once an evaluation set has been inspected, treat it as regression data. The evaluation runner's Release/build-parity and repository-fingerprint checks must not be bypassed.
 
----
-
-# Evaluation rules
-
-Do not optimize production code against known holdout sentences.
-
-Once an evaluation set has been inspected, treat it as regression data, not unseen data.
-
-For new quality certification create a separate unseen set after implementation is frozen.
-
-Always verify Release binary/config parity before quality evaluation.
-
-Do not use stale `--no-build` binaries.
+Documentation-only changes do not require a .NET build unless they alter executable examples or reveal a repository inconsistency. Always run `git diff --check`; validate every path or command added to this file against the checkout.
 
 ---
 
-# Git safety
+## Git and change safety
 
-Preserve existing user changes.
+Preserve existing user changes and avoid unrelated edits. Never use `git reset --hard`, `git checkout .`, or `git clean -fd` unless explicitly authorized. Do not commit or push unless requested.
 
-Never run destructive:
-
-* reset --hard
-* checkout .
-* clean -fd
-
-unless explicitly authorized.
-
-Do not commit or push unless explicitly requested.
-
-Before editing record:
-
-* branch
-* SHA
-* git status
-
-Do not stop merely because the worktree is dirty if the existing changes are clearly part of the current user workflow. Preserve them and avoid unrelated edits.
+Do not edit generated `bin/`, `obj/`, local `crm_dev.db*`, test results, or `.codex-diagnostics/` content. Do not add secrets, tokens, connection strings, private certificates, raw production output, or local evaluation logs.
 
 ---
 
-# Task routing
-
-For semantic planning / Ollama / embedding tasks, start with:
-
-* `docs/architecture/semantic-catalog-driven-planning.md`
-* relevant files under `src/CrmAnalytics.Infrastructure/Integrations/`
-* relevant catalog/NLU files under `src/Crm.Analytics.Sql/`
-
-For Query Builder tasks, start with:
-
-* `src/Crm.Analytics.Sql/QueryBuilder/`
-* canonical contracts
-* semantic catalog
-* SQL tests
-
-For Data Scope tasks, start with:
-
-* `tools/CrmAnalytics.DataScopeProvisioner`
-* existing data-scope infrastructure
-* do not inspect semantic-planning code
-
-For Teams tasks, start with:
-
-* `src/CrmAnalytics.Teams`
-* `deploy/teams`
-
-For API authorization tasks, start with:
-
-* API authentication/authorization registration
-* claims/app-role handling
-* integration tests
-
-For deployment tasks, inspect only:
-
-* relevant deploy files
-* relevant Container App/image
-* current Azure resource state
-
-Do not redeploy unrelated components.
-
----
-
-# Legacy compatibility boundary
-
-`crm-project/`, `crm-project.Tests/`, and
-`.github/workflows/devops_lokman-crm-project.yml` are retained only for the
-legacy Azure Web App deployment path. They are not canonical runtime source.
-Do not modify or remove them unless the task explicitly targets the legacy
-cutover.
-
----
-
-# Definition of done
+## Definition of done
 
 A code task is complete when:
 
-* requested behavior is implemented
-* relevant tests pass
-* no safety invariant is weakened
-* Release build passes when appropriate
-* `git diff --check` passes
-* no unrelated files were changed
+- requested behavior is implemented;
+- relevant targeted tests pass;
+- affected integration tests and Release build pass when appropriate;
+- no safety invariant is weakened;
+- `git diff --check` passes;
+- only intended files changed.
 
-Do not continue adding improvements after the requested goal is satisfied.
+Final responses must be concise and report:
 
-Stop and report.
+- goal or root cause;
+- changed files;
+- tests/verification;
+- deployment state;
+- blockers, or explicitly state none.
+
+Stop when the requested goal is satisfied.
